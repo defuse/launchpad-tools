@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""
+Habit grid window for the Launchpad habit tracker.
+
+Mirrors the 8x8 board so screen and pads correspond one-to-one. Resident: built
+once, then shown/hidden, because spawning python+tk per peek was visibly laggy.
+
+stdin:   data <json>   merge states while a window is open (see handle())
+         load <json>   replace the whole table -- used when switching between
+                       the daily and weekly tabs, where a merge would leave the
+                       previous tab's habits behind
+                       state: 0 unstarted, 1 started (red), 2 complete (green)
+         show R C      read-only,  cell R,C outlined YELLOW  (pad held)
+         edit R C      editable,   cell R,C outlined RED     (triple click)
+         hide          withdraw
+         focus R C     move the selection
+         commit        save and close (clicking the selected pad again)
+stdout:  set R C NAME COLOUR      emitted as soon as a name or colour changes
+         state R C V              a cell's state changed (applies immediately,
+                                  like holding the pad -- NOT part of the
+                                  name/colour transaction, so Esc leaves it)
+         closed                   the edit session ended (Enter or Esc)
+
+Every change applies immediately -- typing, colours, drags, state -- and is sent
+to the board as it happens, so the pads track what is on screen. Esc is the only
+way to close the window; there is no save step and nothing to discard.
+
+Not override-redirect: an unmanaged window never takes keyboard focus, which is
+why typing and Esc did nothing in the first version.
+"""
+import sys, json, re, copy, subprocess, threading, queue
+import tkinter as tk
+
+PALETTE = [(3,'white','#e8e8e8'), (9,'orange','#ff8c1a'), (13,'yellow','#ffd21a'),
+           (33,'cyan','#1ad6d6'), (37,'sky','#3aa0ff'), (45,'blue','#3355ff'),
+           (49,'purple','#9a3aff'), (53,'magenta','#ff3ad6'), (57,'pink','#ff7ab0')]
+BY_IDX  = {i: h for i, _, h in PALETTE}
+NAME_OF = {i: n for i, n, _ in PALETTE}
+ROWS, COLS, HAB_ROW0 = 8, 8, 1
+BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
+YELLOW_B, RED_B = '#ffd21a', '#ff4444'
+# cell background carries the habit state; deliberately dim so the bright
+# name text stays legible on top of it
+STATE_BG = {0: CELL_BG, 1: '#3a1618', 2: '#123021'}
+
+
+def g9_centre_box():
+    try:
+        mons = subprocess.run(['xrandr','--listmonitors'],capture_output=True,text=True).stdout
+        best = None
+        for line in mons.splitlines():
+            m = re.search(r'(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)', line)
+            if m:
+                w,h,x,y = map(int, m.groups())
+                if not best or w > best[0]: best = (w,h,x,y)
+        gw,gh,gx,gy = best
+        wa = subprocess.run(['xprop','-root','_NET_WORKAREA'],capture_output=True,text=True).stdout
+        n = [int(v) for v in re.findall(r'\d+', wa.split('=')[1])]
+        top, bot = max(gy, n[1]), min(gy+gh, n[1]+n[3])
+        w = min(3840, gw)
+        return w, bot-top, gx + (gw-w)//2, top
+    except Exception:
+        return 1600, 900, 100, 100
+
+
+class Grid:
+    def __init__(self):
+        self.habits = {}
+        self._painting = False
+        self.mode, self.focus_rc = None, None
+        self.drag_from = None
+        self.ghost = None
+        self.root = tk.Tk(); self.root.title('habits'); self.root.configure(bg=BG)
+        self.root.attributes('-topmost', True)
+        w,h,x,y = g9_centre_box(); self.root.geometry(f'{w}x{h}+{x}+{y}')
+        self.root.protocol('WM_DELETE_WINDOW', self.cancel)
+
+        hdr = tk.Frame(self.root, bg=BG); hdr.pack(fill='x', padx=26, pady=(12,0))
+        self.hint = tk.Label(hdr, text='', font=('DejaVu Sans',16), fg=MUTED, bg=BG)
+        self.hint.pack(side='left')
+
+        outer = tk.Frame(self.root, bg=BG); outer.pack(fill='both', expand=True, padx=22, pady=14)
+        self.frames, self.entries, self.vars, self.colbtn, self.strips = {}, {}, {}, {}, {}
+        self.owner = {}                                  # widget -> (r,c)
+        for r in range(HAB_ROW0, ROWS):
+            outer.grid_rowconfigure(r-HAB_ROW0, weight=1)
+            for c in range(COLS):
+                outer.grid_columnconfigure(c, weight=1)
+                f = tk.Frame(outer, bg=CELL_BG, highlightthickness=5, highlightbackground=BG)
+                f.grid(row=r-HAB_ROW0, column=c, sticky='nsew', padx=4, pady=4)
+                f.grid_propagate(False)
+                self.frames[(r,c)] = f
+                strip = tk.Frame(f, bg=CELL_BG, cursor='fleur')      # drag handle
+                strip.pack(fill='x', padx=8, pady=(6,0))
+                mb = tk.Menubutton(strip, text=' ', width=3, relief='flat',
+                                   bg=BY_IDX[3], activebackground=BY_IDX[3], cursor='hand2')
+                menu = tk.Menu(mb, tearoff=0)
+                for idx,nm,hexc in PALETTE:
+                    menu.add_command(label=nm, background=hexc, foreground='#111',
+                                     command=lambda i=idx, rr=r, cc=c: self.set_colour(rr,cc,i))
+                self.strips[(r,c)] = strip
+                mb.configure(menu=menu); mb.pack(side='left')
+                self.colbtn[(r,c)] = mb
+                grip = tk.Label(strip, text='⠿  drag', font=('DejaVu Sans',12),
+                                fg=MUTED, bg=CELL_BG, cursor='fleur')
+                grip.pack(side='right')
+                v = tk.StringVar(); self.vars[(r,c)] = v
+                v.trace_add('write', lambda *a, rr=r, cc=c: self.name_typed(rr,cc))
+                # tk.Entry draws a focus ring in a light default colour; force it
+                # black so the field blends into the dark cell instead of framing it
+                e = tk.Entry(f, textvariable=v, font=('DejaVu Sans',20), justify='center',
+                             bg=CELL_BG, fg='#f0f0f4', insertbackground='#f0f0f4', relief='flat',
+                             bd=0, highlightthickness=1,
+                             highlightbackground='#000000', highlightcolor='#000000',
+                             disabledbackground=CELL_BG, disabledforeground='#f0f0f4')
+                e.pack(expand=True, fill='x', padx=10, pady=(0,8))
+                self.entries[(r,c)] = e
+                e.bind('<FocusIn>', lambda ev, rr=r, cc=c: self.set_focus(rr,cc))
+                for wdg in (f, strip, grip):
+                    self.owner[str(wdg)] = (r,c)
+                    wdg.bind('<ButtonPress-1>',   lambda ev, rr=r, cc=c: self.drag_start(rr,cc))
+                    wdg.bind('<B1-Motion>',       self.move_ghost)
+                    wdg.bind('<ButtonRelease-1>', self.drag_drop)
+                self.owner[str(e)] = (r,c)
+                # Double click anywhere in the cell cycles its state; 'break' on
+                # the Entry stops Tk also doing its select-the-word default.
+                #
+                # Triple and Quadruple are bound to a swallow ON PURPOSE. Tk
+                # delivers a press to the most specific pattern that matches, so
+                # with only Button and Double bound, a third, fourth, fifth ...
+                # click all fell through to <Double-Button-1>. Tk keeps counting
+                # clicks for as long as they land within 500 ms and 5 px of each
+                # other and then saturates, so once you had double-clicked a
+                # cell every further click kept cycling the habit -- which is
+                # exactly the "after a while a single click cycles it" report.
+                # Claiming the higher counts pins cycling to click number two.
+                for wdg in (f, strip, grip, e):
+                    wdg.bind('<Double-Button-1>', lambda ev, rr=r, cc=c: self.cycle_state(rr,cc))
+                    for seq in ('<Triple-Button-1>', '<Quadruple-Button-1>'):
+                        wdg.bind(seq, lambda ev: 'break')
+
+        # Esc is the only way out; Enter just commits any half-typed name
+        self.root.bind_all('<Escape>', lambda ev: (self.cancel(), 'break')[1])
+        for seq in ('<Return>', '<KP_Enter>'):
+            self.root.bind_all(seq, lambda ev: (self.pull_names(), 'break')[1])
+        self.root.withdraw()
+
+    # ---- helpers ----
+    def key(self,r,c): return f'{r},{c}'
+    def get(self,r,c):  return self.habits.get(self.key(r,c), {'name':'','colour':3,'state':0})
+
+    def put(self,r,c,h):
+        if h.get('name'): self.habits[self.key(r,c)] = h
+        else:             self.habits.pop(self.key(r,c), None)
+
+    def name_typed(self, r, c):
+        """Live rename. Guarded because paint() writes the StringVars too."""
+        if self._painting or self.mode is None:
+            return
+        name = self.vars[(r,c)].get().strip()
+        h = dict(self.get(r,c))
+        if name == h.get('name',''):
+            return
+        h['name'] = name
+        if not name: h['state'] = 0
+        self.put(r,c,h)
+        self.emit(r,c)
+
+    def set_focus(self,r,c):
+        # Only the edit session follows keyboard focus. On deiconify Tk restores
+        # focus to whichever Entry had it last, which fired <FocusIn> and
+        # silently overwrote the cell that 'show' had just selected -- the
+        # highlight then appeared stuck on one cell forever.
+        if self.mode != 'edit':
+            return
+        self.focus_rc=(r,c); self.paint()
+    def cycle_state(self, r, c):
+        """Same action as holding the pad: immediate, outside the transaction."""
+        h = self.habits.get(self.key(r,c))
+        if not h or not h.get('name'):
+            return 'break'
+        h['state'] = (h.get('state', 0) + 1) % 3
+        sys.stdout.write(f"state\t{r}\t{c}\t{h['state']}\n"); sys.stdout.flush()
+        self.paint()
+        return 'break'
+
+    def set_colour(self,r,c,idx):
+        if self.mode!='edit': return
+        h = dict(self.get(r,c)); h['colour']=idx
+        if not h.get('name'): h['name'] = self.vars[(r,c)].get().strip()
+        self.put(r,c,h); self.emit(r,c); self.paint()
+
+    # ---- drag to swap ----
+    def drag_start(self,r,c):
+        if self.mode!='edit': return
+        self.drag_from=(r,c)
+        self.pull_names()
+        h = self.get(r,c)
+        if not h.get('name'): return
+        g = tk.Toplevel(self.root)
+        g.overrideredirect(True); g.attributes('-topmost', True)
+        g.attributes('-alpha', 0.85)
+        col = BY_IDX.get(h.get('colour',3), '#e8e8e8')
+        tk.Label(g, text=h['name'], font=('DejaVu Sans',20,'bold'),
+                 fg=col, bg='#000008', padx=18, pady=10,
+                 highlightbackground=col, highlightthickness=3).pack()
+        self.ghost = g
+        self.move_ghost()
+
+    def move_ghost(self, ev=None):
+        if not getattr(self,'ghost',None): return
+        x,y = self.root.winfo_pointerxy()
+        self.ghost.geometry(f'+{x+18}+{y+16}')
+
+    def kill_ghost(self):
+        if getattr(self,'ghost',None):
+            try: self.ghost.destroy()
+            except Exception: pass
+        self.ghost=None
+
+    def drag_drop(self, ev):
+        if self.mode!='edit' or not self.drag_from:
+            # Bail out tidily: returning straight from here left the ghost
+            # Toplevel on screen, topmost, with nothing left to destroy it.
+            self.kill_ghost(); self.drag_from = None
+            return
+        w = self.root.winfo_containing(ev.x_root, ev.y_root)
+        tgt = None
+        while w is not None and tgt is None:
+            tgt = self.owner.get(str(w)); w = getattr(w,'master',None)
+        self.kill_ghost()
+        src = self.drag_from; self.drag_from=None
+        if tgt and tgt!=src and tgt[0]>=HAB_ROW0:
+            self.pull_names()
+            a,b = dict(self.get(*src)), dict(self.get(*tgt))
+            self.put(src[0],src[1],b); self.put(tgt[0],tgt[1],a)
+            self.emit(*src); self.emit(*tgt)
+            self.focus_rc = tgt
+            self.paint()
+
+    def emit(self, r, c):
+        """Tell the board a cell's name/colour changed. Called on every edit --
+        typing, colour pick, drag swap -- since there is no commit step."""
+        h = self.habits.get(self.key(r,c), {'name':'','colour':3,'state':0})
+        # the protocol is tab separated and newline terminated, so a pasted name
+        # containing either would split into fields the board cannot parse
+        name = re.sub(r'\s+', ' ', h.get('name','')).strip()
+        sys.stdout.write(f"set\t{r}\t{c}\t{name}\t{h.get('colour',3)}\n")
+        sys.stdout.flush()
+
+    def pull_names(self):
+        """Fold what's typed in the entries back into the working copy."""
+        for (r,c),v in self.vars.items():
+            name = v.get().strip(); h = dict(self.get(r,c))
+            if name != h.get('name',''):
+                h['name']=name
+                if not name: h['state']=0
+                self.put(r,c,h)
+
+    # ---- paint ----
+    def paint(self):
+        # try/finally: a throw halfway through used to leave _painting stuck on,
+        # after which name_typed() returned early forever and typing a habit
+        # name silently did nothing.
+        self._painting = True
+        try:
+            self._paint()
+        finally:
+            self._painting = False
+
+    def _paint(self):
+        for r in range(HAB_ROW0, ROWS):
+            for c in range(COLS):
+                h = self.get(r,c); col = BY_IDX.get(h.get('colour',3), '#e8e8e8')
+                self.vars[(r,c)].set(h.get('name',''))
+                shown = col          # name always shows its own colour
+                cbg = STATE_BG.get(h.get('state', 0), CELL_BG)   # only the bg shows state
+                # a disabled Entry paints with disabledforeground, NOT fg -- set both
+                self.entries[(r,c)].configure(fg=shown, disabledforeground=shown,
+                    bg=cbg, disabledbackground=cbg, state='normal')
+                self.frames[(r,c)].configure(bg=cbg)
+                self.strips[(r,c)].configure(bg=cbg)
+                # leave the colour button enabled so its swatch keeps its colour;
+                # set_colour() already refuses to act outside edit mode
+                self.colbtn[(r,c)].configure(bg=col, activebackground=col)
+                for w in self.strips[(r,c)].winfo_children():
+                    if isinstance(w, tk.Label): w.configure(bg=cbg)
+                b = BG
+                if self.focus_rc==(r,c): b = RED_B if self.mode=='edit' else YELLOW_B
+                self.frames[(r,c)].configure(highlightbackground=b, highlightcolor=b)
+        self.hint.configure(text='drag the ⠿ handle to swap · double-click a cell to cycle · Esc closes'
+                            if self.mode=='edit' else '')
+
+    # ---- transaction ----
+    def save(self):
+        """Nothing to commit -- every change already went out. Kept so the
+        board's 'commit' command and stray Enter presses are harmless."""
+        self.pull_names()
+
+    def cancel(self):
+        self.finish()
+
+    def finish(self):
+        self.kill_ghost()
+        if self.mode=='edit':
+            sys.stdout.write('closed\n'); sys.stdout.flush()
+        self.mode=None; self.focus_rc=None; self.drag_from=None; self.root.withdraw()
+
+    # ---- commands ----
+    def handle(self, line):
+        p = line.split('\t'); cmd = p[0]
+        # A short line used to raise IndexError out of handle(), out of pump(),
+        # and the after() loop was never rescheduled -- the window stayed up but
+        # stopped listening to the board for the rest of the session.
+        need = {'load':2, 'data':2, 'show':3, 'edit':3, 'focus':3}.get(cmd, 1)
+        if len(p) < need:
+            return
+        if cmd=='load':
+            try: self.habits = json.loads(p[1])
+            except Exception: return
+            self.paint()
+        elif cmd=='data':
+            try: incoming = json.loads(p[1])
+            except Exception: return
+            if self.mode == 'edit':
+                # An edit is in progress: merge ONLY the state field, so holding a
+                # pad still recolours the cell without overwriting names or colours
+                # being typed. Blocking the whole message froze the backgrounds.
+                for k, v in incoming.items():
+                    if k in self.habits:
+                        self.habits[k]['state'] = v.get('state', 0)
+                    else:
+                        self.habits[k] = v
+                self.paint()
+            else:
+                self.habits = incoming
+                if self.mode: self.paint()
+        elif cmd in ('show','edit'):
+            r,c = int(p[1]), int(p[2])
+            self.mode, self.focus_rc = cmd, (r,c)
+            self.paint(); self.root.deiconify(); self.root.lift()
+            self.root.attributes('-topmost', True)
+            if cmd=='edit':
+                self.root.focus_force()
+                e = self.entries.get((r,c))
+                if e: e.focus_set(); e.icursor('end')
+        elif cmd=='focus' and self.mode=='edit':
+            # a pad pressed while editing just moves the selection
+            r,c = int(p[1]), int(p[2])
+            self.focus_rc=(r,c); self.paint()
+            e=self.entries.get((r,c))
+            if e: e.focus_set(); e.icursor('end')
+        elif cmd=='commit':
+            self.save()
+        elif cmd=='hide':
+            self.finish()
+
+    def run(self):
+        q=queue.Queue()
+        def rd():
+            for l in sys.stdin: q.put(l.rstrip('\n'))
+            q.put(None)
+        threading.Thread(target=rd, daemon=True).start()
+        def pump():
+            # One bad line must never stop the pump: if this callback throws,
+            # after() is not rescheduled and the window goes deaf to the board.
+            try:
+                while True:
+                    l=q.get_nowait()
+                    if l is None: self.root.destroy(); return
+                    try:
+                        self.handle(l)
+                    except Exception as e:
+                        print(f'bad command {l[:60]!r}: {e!r}', file=sys.stderr, flush=True)
+            except queue.Empty: pass
+            self.root.after(16, pump)
+        self.root.after(16, pump); self.root.mainloop()
+
+
+if __name__ == '__main__':
+    Grid().run()

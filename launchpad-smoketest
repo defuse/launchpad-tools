@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Exercise Board and Grid without hardware.
+
+Twice now a patch has deleted a method while rewriting an adjacent one. The code
+stayed syntactically valid and only blew up when that path was pressed, and Tk
+swallowed the traceback into stderr so it looked like 'nothing happens'. This
+calls every entry point once so that fails loudly at edit time instead.
+"""
+import types, json, os, sys, io
+
+def load(path, fake_mido=False):
+    src = open(path).read().replace("if __name__ == '__main__':", "if False:")
+    if fake_mido:
+        src = src.replace("import mido,", "import types as _t; mido=_t.SimpleNamespace("
+                          "Message=lambda *a, **k: None); import")
+    m = types.ModuleType('m')
+    exec(compile(src, path, 'exec'), m.__dict__)
+    return m
+
+fails = []
+b = load(os.path.expanduser('~/.local/bin/launchpad-pomodoro'), fake_mido=True)
+class Out:
+    def send(self, *a, **k): pass
+board = b.Board(Out())
+for mode in (b.M_POMO, b.M_SYS, b.M_NET, b.M_HAB, b.M_HAB2):
+    board.mode = mode
+    for fn in ('tick', 'render'):
+        try: getattr(board, fn)()
+        except Exception as e: fails.append(f'Board.{fn} mode={mode}: {e!r}')
+board.mode = b.M_HAB
+for note in (81, 88, 61, 18):
+    for fn in ('press', 'release'):
+        try: getattr(board, fn)(note)
+        except Exception as e: fails.append(f'Board.{fn}({note}): {e!r}')
+for fn, args in (('cycle_state', (2, 0)), ('edit_habit', (2, 0)), ('reset', ()),
+                 ('habit', (2, 0)), ('rc', (61,))):
+    try: getattr(board, fn)(*args)
+    except Exception as e: fails.append(f'Board.{fn}: {e!r}')
+
+if os.environ.get('DISPLAY'):
+    g = load(os.path.expanduser('~/.local/bin/habit-popup')).Grid()
+    hs = json.load(open(os.path.expanduser('~/.local/share/launchpad-pomodoro.json')))['habit_sets']['1']
+    buf, old = io.StringIO(), sys.stdout
+    sys.stdout = buf
+    try:
+        for cmd in ('load\t' + json.dumps(hs), 'edit\t2\t0', 'focus\t3\t1',
+                    'data\t' + json.dumps(hs), 'show\t2\t0', 'hide'):
+            g.handle(cmd)
+        for fn, args in (('cycle_state', (2, 0)), ('set_colour', (2, 0, 45)),
+                         ('name_typed', (2, 0)), ('pull_names', ()), ('emit', (2, 0)),
+                         ('paint', ()), ('drag_start', (2, 0)), ('kill_ghost', ()),
+                         ('save', ()), ('cancel', ())):
+            try: getattr(g, fn)(*args)
+            except Exception as e: fails.append(f'Grid.{fn}: {e!r}')
+    finally:
+        sys.stdout = old
+        g.root.destroy()
+else:
+    print('  (no DISPLAY - skipped the window)')
+
+print('  FAILURES:' if fails else '  all entry points OK')
+for f in fails: print('   ', f)
+sys.exit(1 if fails else 0)

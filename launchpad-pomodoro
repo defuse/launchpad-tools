@@ -1,0 +1,752 @@
+#!/usr/bin/env python3
+"""
+Pomodoro board on a Novation Launchpad Mini MK3.
+
+  row 8 (top)   MODE ROW. One pad per mode, lit bright when selected and dim
+                when not. Modes keep their own state and keep running while
+                hidden -- a pomodoro started in mode 1 still finishes (and still
+                chimes) while you are looking at mode 2.
+                RIGHTMOST pad is RED: HOLD 2s to reset the board to default.
+                Holding fills the row leftward so you can see it coming, and
+                letting go early cancels -- a corner pad is too easy to brush
+                for a single press to be allowed to kill a running timer.
+  rows 7..3     five independent pomodoro timers, one per row.
+  rows 2..1     free toggles, press cycles off -> red -> green -> off.
+
+A pomodoro row, left to right, is its own progress bar:
+
+  idle        leftmost pad WHITE, rest dark. Press it to start.
+  running     3 minutes per pad, 8 pads = 24 minutes.
+              finished pads solid green, the current one flashing.
+  elapsed     whole row RED except the last pad, which is GREEN.
+                press any RED -> failed, back to idle
+                press the GREEN -> claimed, whole row solid green
+  claimed     press leftmost -> back to idle, ready to run again
+
+  Habit gestures (there is no separate view mode -- the window is the view):
+    click            open the window with that cell selected; clicking the
+                     SELECTED cell again closes it, a different one moves the
+                     selection
+    hold             cycle that habit's state once per second held, so keeping
+                     the pad down walks unstarted -> started -> complete -> ...
+
+  Habits cycle through three states:
+    0 unstarted  -- the habit's own colour
+    1 started    -- RED
+    2 complete   -- GREEN
+
+  Holding the leftmost pad of any row for 2s returns that row to idle whatever
+  state it is in -- the only way to abandon a pomodoro part-way through. It
+  fills the row red as it goes, and letting go early cancels.
+
+The point is that starting costs one press with no decisions, and the row
+state is readable from across the room without reading anything.
+"""
+import mido, time, sys, json, os, threading, subprocess, shutil, signal
+
+# ---- hardware -------------------------------------------------------------
+SYSEX_PROGRAMMER = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01]
+SYSEX_LIVE       = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x00]
+CH_STATIC, CH_FLASH, CH_PULSE = 0, 1, 2      # MIDI channels select the mode
+
+# The Launchpad's own flash is a fixed 50% duty cycle locked to its internal
+# clock, so the in-progress pad is blinked in software instead: mostly lit with
+# a short blink off, which reads as "this one is live" rather than "alert".
+FLASH_ON, FLASH_OFF = 1.5, 0.3
+
+OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
+YELLOW, CYAN = 13, 33
+DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
+
+# mode row: one colour per mode; the SELECTED mode shows white instead
+MAGENTA, ORANGE, PINK = 53, 9, 57
+TAB_SELECTED = PINK                  # tabs are white; the selected one is pink
+
+# Tab column -> mode. Columns 3-5 are deliberately empty, and column 7 is the
+# reset pad, so modes are addressed by the column they sit on rather than by
+# a running index.
+M_POMO, M_HAB, M_HAB2, M_SYS, M_NET = 0, 1, 2, 5, 6
+TABS = (M_POMO, M_HAB, M_HAB2, M_SYS, M_NET)
+HAB_MODES = (M_HAB, M_HAB2)          # each keeps its own independent set
+NET_IFACE = None                     # auto-detected: the default-route interface
+
+# habits occupy everything below the mode row
+HAB_ROWS = [1, 2, 3, 4, 5, 6, 7]
+# No hold threshold for peeking: the window opens the instant a pad goes down
+# and closes on release, so a plain click just flashes it. Waiting to decide
+# whether a press was a "hold" cost 350ms of dead time before anything appeared.
+HOLD_CYCLE  = 1.0         # hold this long to advance a habit's state
+POPUP = os.path.expanduser('~/.local/bin/habit-popup')
+
+# ---- layout ---------------------------------------------------------------
+# Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
+# We think top-down, so logical row 0 is the top physical row (8).
+def pad(lrow, lcol):
+    return (8 - lrow) * 10 + (lcol + 1)
+
+FUNC_ROW   = 0
+RESET_COL  = 7                                # top-right pad
+RESET_HOLD = 2.0                              # seconds to hold before it fires
+POMO_ROWS  = [1, 2, 3, 4, 5]
+TOGGLE_ROWS= [6, 7]
+# system monitor: memory across the bottom row, CPU columns in the rows above
+MEM_ROW    = 7
+CPU_ROWS   = [1, 2, 3, 4, 5, 6]           # drawn bottom-up
+CELLS      = 8
+SECS_PER_CELL = 3 * 60                        # 8 * 3 min = 24 min
+STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
+SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
+PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
+
+def ding(name):
+    """Fire and forget -- never wait on audio from the input loop."""
+    f = os.path.join(SOUND_DIR, name)
+    if PLAYER and os.path.exists(f):
+        try:
+            subprocess.Popen([PLAYER, f],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+IDLE, RUNNING, ELAPSED, CLAIMED = 'idle', 'running', 'elapsed', 'claimed'
+
+
+class Board:
+    def __init__(self, out):
+        self.out = out
+        self.shown = {}                        # pad -> (channel, colour)
+        self.rows = {r: {'state': IDLE, 'started': 0.0} for r in POMO_ROWS}
+        self.toggles = {}                      # (row,col) -> 0/1/2
+        # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
+        # every tab reuses the same 64 physical pads, so note 61 is both habit
+        # cell (2,0) and pomodoro row 2's start pad. A press must only ever be
+        # read as a gesture by the tab it was made on.
+        self.held = {}
+        self.mode = M_POMO
+        # one habit table per habit mode: daily and weekly are unrelated boards
+        self.habit_sets = {str(m): {} for m in HAB_MODES}
+        self._hold_count = {}                  # note -> cycles already fired while held
+        self._popup = None                     # resident peek window (daemon)
+        self._popup_mode = M_HAB               # which table the window is showing
+        self._editing = None                   # (r,c) while the edit window is up
+        self._cpu_prev = None
+        self._dirty = False
+        self._lock = threading.Lock()
+        self.load()
+        # Saving must never block input. The state file lives on /home, which is
+        # an md array: while it is being scrubbed a single write was measured at
+        # 2.4 SECONDS, which showed up as pads lighting half a second after the
+        # press. A background writer decouples the two.
+        threading.Thread(target=self._writer, daemon=True).start()
+        self._start_popup()
+
+    def _start_popup(self):
+        """Keep one popup process resident. Spawning a fresh python+tk per peek
+        cost ~200ms, which read as lag."""
+        try:
+            env = dict(os.environ)
+            env.setdefault('DISPLAY', ':0')
+            self._popup = subprocess.Popen(
+                [POPUP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                text=True, env=env, bufsize=1)
+            threading.Thread(target=self._popup_reader, daemon=True).start()
+            self._popup_send_table()
+        except Exception:
+            self._popup = None
+
+    def _popup_send_table(self, cmd='data'):
+        """Push the table the window is meant to be showing.
+
+        Addressed by _popup_mode, not by self.mode: self.habits is {} whenever
+        a non-habit tab is selected, so sending self.habits from here blanked
+        the window every time the board happened to be on the pomodoro tab.
+        """
+        self._popup_cmd(f'{cmd}\t' + json.dumps(self.habit_table(self._popup_mode)))
+
+    def _popup_reader(self):
+        """Edits made in the window come back as: set<TAB>r<TAB>c<TAB>name<TAB>colour
+
+        Runs on its own thread. It writes into the table the window was given
+        (_popup_mode), never into self.habits, which follows the selected tab
+        and would send an edit to the wrong board -- or, on a non-habit tab, to
+        a throwaway dict where it was silently lost.
+        """
+        pr = self._popup
+        try:
+            for line in pr.stdout:
+                f = line.rstrip('\n').split('\t')
+                mode = self._popup_mode
+                if f[0] == 'closed':
+                    self._editing = None
+                    continue
+                if len(f) == 4 and f[0] == 'state':
+                    r, c, st = int(f[1]), int(f[2]), int(f[3])
+                    h = dict(self.habit(r, c, mode))
+                    if h.get('name'):
+                        h['state'] = st
+                        self.set_habit(r, c, h, mode)
+                    continue
+                if len(f) == 5 and f[0] == 'set':
+                    r, c, name, colour = int(f[1]), int(f[2]), f[3].strip(), int(f[4])
+                    old = self.habit(r, c, mode)
+                    self.set_habit(r, c, {'name': name, 'colour': colour,
+                                          'state': old.get('state', 0) if name else 0}, mode)
+        except Exception as e:
+            print(f"popup reader stopped: {e!r}", flush=True)
+
+    def _popup_cmd(self, line):
+        if not self._popup or self._popup.poll() is not None:
+            self._start_popup()                # it died; bring it back
+        try:
+            self._popup.stdin.write(line + '\n')
+            self._popup.stdin.flush()
+        except Exception:
+            self._popup = None
+
+    # --- persistence: a timer should survive restarting this program --------
+    def load(self):
+        try:
+            with open(STATE_FILE) as fh:
+                d = json.load(fh)
+        except FileNotFoundError:
+            return                             # first run; defaults are correct
+        except Exception as e:
+            # Never silently start from defaults on top of a file we could not
+            # read: the background writer would then overwrite a recoverable
+            # state file with an empty board a second later.
+            print(f"state file unreadable ({e!r}); kept as {STATE_FILE}.bad",
+                  flush=True)
+            try:
+                os.replace(STATE_FILE, STATE_FILE + '.bad')
+            except Exception:
+                pass
+            return
+        try:
+            for k, v in d.get('rows', {}).items():
+                if int(k) in self.rows: self.rows[int(k)] = v
+            self.toggles = {tuple(map(int, k.split(','))): v
+                            for k, v in d.get('toggles', {}).items()}
+            # The selected tab decides what every pad below the top row DOES.
+            # Coming back up on the pomodoro tab after a restart meant the next
+            # press aimed at a habit landed on a pomodoro row instead, and on an
+            # elapsed row that press means "failed" -- it wiped the timer.
+            if d.get('mode') in TABS:
+                self.mode = self._popup_mode = d['mode']
+            if self.mode not in HAB_MODES:
+                self._popup_mode = M_HAB
+            self.habit_sets = d.get('habit_sets') or {str(m): {} for m in HAB_MODES}
+            if d.get('schema', 1) < 2:
+                # tabs were reordered; daily/weekly used to live at 2 and 3
+                old = dict(self.habit_sets)
+                self.habit_sets = {str(M_HAB): old.get('2', {}),
+                                   str(M_HAB2): old.get('3', {})}
+            if 'habits' in d and not self.habit_sets.get(str(M_HAB)):
+                self.habit_sets[str(M_HAB)] = d['habits']      # migrate older layout
+            for m in HAB_MODES:
+                self.habit_sets.setdefault(str(m), {})
+            if d.get('schema', 1) < 3:
+                for tbl in self.habit_sets.values():
+                    for h in tbl.values():
+                        if 'state' not in h:
+                            h['state'] = 2 if h.pop('done', False) else 0
+                self._dirty = True             # write the migrated layout out now
+        except Exception as e:
+            print(f"state file only partly loaded: {e!r}", flush=True)
+
+    def save(self):
+        """Mark dirty; the background thread does the actual write."""
+        self._dirty = True
+
+    def _writer(self):
+        while True:
+            time.sleep(1.0)
+            self._flush_if_dirty()
+
+    def _flush_if_dirty(self):
+        """One pass of the writer loop. Split out so it can be tested."""
+        if not self._dirty:
+            return False
+        # Clear the flag only once the bytes are on disk. Clearing it first
+        # meant any failed write -- a dumps() racing the popup reader thread, a
+        # full disk -- threw the change away with nothing left to retry from.
+        if self._flush():
+            self._dirty = False
+            return True
+        return False
+
+    def _flush(self):
+        try:
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            with self._lock:
+                blob = json.dumps({'rows': {str(k): v for k, v in self.rows.items()},
+                                   'toggles': {f'{r},{c}': v for (r, c), v in self.toggles.items()},
+                                   'habit_sets': self.habit_sets,
+                                   'mode': self.mode,
+                                   'schema': 3})
+            tmp = STATE_FILE + '.tmp'
+            with open(tmp, 'w') as f:
+                f.write(blob)
+            os.replace(tmp, STATE_FILE)
+            return True
+        except Exception as e:
+            print(f"could not write state: {e!r}", flush=True)
+            return False
+
+    # --- drawing -----------------------------------------------------------
+    def set(self, p, colour, channel=CH_STATIC):
+        if self.shown.get(p) == (channel, colour):
+            return                              # don't spam unchanged pads
+        self.shown[p] = (channel, colour)
+        self.out.send(mido.Message('note_on', channel=channel, note=p, velocity=colour))
+
+    def flash(self, p, colour):
+        period = FLASH_ON + FLASH_OFF
+        lit = (time.time() % period) < FLASH_ON
+        self.set(p, colour if lit else OFF, CH_STATIC)
+
+    def clear(self):
+        for lr in range(8):
+            for lc in range(8):
+                self.set(pad(lr, lc), OFF)
+
+    def held_since(self, note, mode=None):
+        """When this pad went down -- but only if it was pressed on the tab we
+        are asking about, otherwise None.
+
+        Every tab reuses the same 64 pads, so note 61 is habit cell (2,0) AND
+        pomodoro row 2's start pad. Reading self.held without checking which tab
+        the press was made on meant holding a habit in column 0 and then tapping
+        the pomodoro tab silently abandoned that pomodoro row -- the hold-to-
+        abandon timer in render() saw a two-second-old entry the moment the
+        pomodoro tab drew its first frame.
+        """
+        got = self.held.get(note)
+        if not got:
+            return None
+        t0, pressed_in = got
+        return t0 if pressed_in == (self.mode if mode is None else mode) else None
+
+    def render(self):
+        # mode row: one pad per mode (white = selected), red reset on the right.
+        # While the reset pad is held, fill leftward as a 2 s progress bar.
+        held_for = 0.0
+        t0 = self.held_since(pad(FUNC_ROW, RESET_COL))
+        if t0: held_for = time.time() - t0
+        lit = int((held_for / RESET_HOLD) * RESET_COL) if held_for else 0
+        for c in range(CELLS):
+            if c == RESET_COL:                     col = RED
+            elif lit and c >= RESET_COL - lit:     col = RED
+            elif c in TABS and not lit:            col = TAB_SELECTED if c == self.mode else WHITE
+            else:                                  col = OFF
+            self.set(pad(FUNC_ROW, c), col)
+        if held_for >= RESET_HOLD:
+            self.reset()
+            self.held.pop(pad(FUNC_ROW, RESET_COL), None)
+
+        if self.mode == M_SYS:
+            self.render_sys()
+            return
+        if self.mode == M_NET:
+            self.render_net()
+            return
+        if self.mode in HAB_MODES:
+            self.render_habits()
+            return
+        now = time.time()
+        for r in POMO_ROWS:
+            st = self.rows[r]
+            s = st['state']
+
+            # holding the leftmost pad abandons the row; show it filling
+            # (only reachable in pomodoro mode -- render_sys returns earlier)
+            t0 = self.held_since(pad(r, 0), M_POMO)
+            if t0 is not None:
+                frac = (now - t0) / RESET_HOLD
+                if frac >= 1.0:
+                    self.rows[r] = {'state': IDLE, 'started': 0.0}
+                    self.held.pop(pad(r, 0), None)
+                    self.save()
+                    for c in range(CELLS):
+                        self.set(pad(r, c), WHITE if c == 0 else OFF)
+                    continue
+                if frac > 0.08:                # ignore an ordinary tap
+                    n = int(frac * CELLS) + 1
+                    for c in range(CELLS):
+                        self.set(pad(r, c), RED if c < n else OFF)
+                    continue
+            # render only draws. tick() owns every state transition and always
+            # runs first, so the elapsed handover (and its chime) lives there --
+            # doing it in both meant two places could fire the same transition.
+            if s == RUNNING:
+                done = min(int((now - st['started']) // SECS_PER_CELL), CELLS - 1)
+                for c in range(CELLS):
+                    p = pad(r, c)
+                    if c < done:    self.set(p, GREEN)
+                    elif c == done: self.flash(p, GREEN)
+                    else:           self.set(p, OFF)
+            elif s == ELAPSED:
+                for c in range(CELLS):
+                    self.set(pad(r, c), GREEN if c == CELLS - 1 else RED)
+            elif s == CLAIMED:
+                for c in range(CELLS):
+                    self.set(pad(r, c), GREEN)
+            else:                                  # IDLE, and anything unknown
+                for c in range(CELLS):
+                    self.set(pad(r, c), WHITE if c == 0 else OFF)
+
+        for r in TOGGLE_ROWS:
+            for c in range(CELLS):
+                v = self.toggles.get((r, c), 0)
+                self.set(pad(r, c), (OFF, RED, GREEN)[v])
+
+    # --- input -------------------------------------------------------------
+    def tick(self):
+        """Advance every mode's state, whether or not it is on screen. A
+        pomodoro must finish (and chime) while you are looking at another mode."""
+        now = time.time()
+
+        # habit gestures: holding a cell walks it through its states, one step
+        # per second. Only pads pressed on THIS tab count -- a pad still down
+        # from another tab is not a gesture here.
+        if self.mode in HAB_MODES:
+            for note in list(self.held):
+                t0 = self.held_since(note)
+                got = self.rc(note)
+                if t0 is None or not got or got[0] not in HAB_ROWS:
+                    continue
+                due = int((now - t0) / HOLD_CYCLE)      # one cycle per second held
+                done = self._hold_count.get(note, 0)
+                if due > done:
+                    self._hold_count[note] = due
+                    for _ in range(due - done):
+                        self.cycle_state(*got)
+        for r in POMO_ROWS:
+            st = self.rows[r]
+            if st['state'] == RUNNING and (now - st['started']) >= CELLS * SECS_PER_CELL:
+                st['state'] = ELAPSED
+                self.save()
+                ding('finish.wav')
+
+    # ---- mode 2: system monitor -----------------------------------------
+    def cpu_usage(self):
+        """Per-CPU busy fraction since the previous call."""
+        cur = {}
+        for line in open('/proc/stat'):
+            if not line.startswith('cpu') or line.startswith('cpu '):
+                continue
+            f = line.split()
+            n = int(f[0][3:])
+            vals = [int(x) for x in f[1:]]
+            idle = vals[3] + vals[4]           # idle + iowait
+            cur[n] = (sum(vals), idle)
+        out = {}
+        if self._cpu_prev:
+            for n, (tot, idle) in cur.items():
+                pt, pi = self._cpu_prev.get(n, (tot, idle))
+                dt, di = tot - pt, idle - pi
+                out[n] = max(0.0, min(1.0, (dt - di) / dt)) if dt > 0 else 0.0
+        self._cpu_prev = cur
+        return out
+
+    def mem_usage(self):
+        m = {}
+        for l in open('/proc/meminfo'):
+            k, v = l.split(':', 1)
+            m[k] = int(v.split()[0])
+        tot = m['MemTotal']
+        buf = m['Buffers']
+        cache = m['Cached'] + m['SReclaimable'] - m['Shmem']
+        used = tot - m['MemFree'] - buf - cache
+        return used / tot, buf / tot, cache / tot
+
+    # ---- mode: network ---------------------------------------------------
+    def net_iface(self):
+        global NET_IFACE
+        if NET_IFACE:
+            return NET_IFACE
+        try:
+            for line in open('/proc/net/route'):
+                f = line.split()
+                if len(f) > 2 and f[1] == '00000000':      # default route
+                    NET_IFACE = f[0]
+                    return NET_IFACE
+        except Exception:
+            pass
+        NET_IFACE = 'lo'
+        return NET_IFACE
+
+    def net_rates(self):
+        """bytes/sec in and out since the previous call."""
+        ifc = self.net_iface()
+        rx = tx = 0
+        try:
+            for line in open('/proc/net/dev'):
+                if line.split(':')[0].strip() == ifc:
+                    f = line.split(':')[1].split()
+                    rx, tx = int(f[0]), int(f[8])
+                    break
+        except Exception:
+            pass
+        now = time.time()
+        prev = getattr(self, '_net_prev', None)
+        self._net_prev = (now, rx, tx)
+        if not prev:
+            return 0.0, 0.0
+        dt = max(1e-6, now - prev[0])
+        return max(0, rx - prev[1]) / dt, max(0, tx - prev[2]) / dt
+
+    def render_net(self):
+        """Two half-width bars filling from the bottom. Each row is 4 pads, so a
+        part-filled row gives 4x the resolution of whole rows alone. Log scale --
+        network rates span decades and a linear bar would sit at zero all day."""
+        import math
+        LO, HI = 1e3, 1.25e8                       # 1 KB/s .. ~1 Gbit/s
+        rows = list(reversed(CPU_ROWS + [MEM_ROW]))   # bottom-up, 7 rows
+        half = CELLS // 2
+        steps = len(rows) * half
+        rx, tx = self.net_rates()
+        for side, (rate, colour) in enumerate(((rx, CYAN), (tx, ORANGE))):
+            frac = 0.0 if rate <= LO else min(1.0, math.log10(rate / LO) / math.log10(HI / LO))
+            lit = int(round(frac * steps))
+            for i, r in enumerate(rows):
+                for j in range(half):
+                    n = i * half + j
+                    self.set(pad(r, side * half + j), colour if n < lit else OFF)
+
+    def render_sys(self):
+        # memory across the bottom row, htop's colours: used green,
+        # buffers blue, cache yellow
+        used, buf, cache = self.mem_usage()
+        # each pad takes the colour of whichever segment its midpoint lands in
+        b1, b2, b3 = used * CELLS, (used + buf) * CELLS, (used + buf + cache) * CELLS
+        for c in range(CELLS):
+            mid = c + 0.5
+            colour = (GREEN if mid < b1 else
+                      BLUE  if mid < b2 else
+                      YELLOW if mid < b3 else OFF)
+            self.set(pad(MEM_ROW, c), colour)
+
+        # CPU: 8 columns, each the MAX of its four threads, 6 pads tall
+        u = self.cpu_usage()
+        per = max(1, (len(u) or 32) // CELLS)
+        for c in range(CELLS):
+            group = [u.get(c * per + i, 0.0) for i in range(per)]
+            v = max(group) if group else 0.0
+            lit = int(round(v * len(CPU_ROWS)))
+            for i, r in enumerate(reversed(CPU_ROWS)):   # fill upward
+                if i < lit:
+                    colour = GREEN if i < 4 else (YELLOW if i < 5 else RED)
+                else:
+                    colour = OFF
+                self.set(pad(r, c), colour)
+
+    def rc(self, note):
+        """note -> (logical row, col), or None if it isn't a grid pad."""
+        for lr in range(8):
+            for lc in range(8):
+                if pad(lr, lc) == note:
+                    return lr, lc
+        return None
+
+    def release(self, note):
+        got = self.held.pop(note, None)
+        cycles = self._hold_count.pop(note, 0)   # always drop it; it leaked when
+                                                 # a pad was let go on another tab
+        if got is None or self.mode not in HAB_MODES:
+            return
+        if got[1] != self.mode:
+            return          # pressed on a different tab: not a gesture for this one
+        if cycles:
+            return                              # that was a hold, not a click
+        got = self.rc(note)
+        if not got or got[0] not in HAB_ROWS:
+            return
+        r, c = got
+        if self._editing == (r, c):
+            return                              # already selected; Esc closes
+        elif self._editing:
+            self._editing = (r, c)              # different cell -> move selection
+            self._popup_cmd(f'focus\t{r}\t{c}')
+        else:
+            self.edit_habit(r, c)               # open with this one selected
+
+    def press(self, note):
+        # Tagged with the tab that was showing when the pad went down, so a pad
+        # still held across a tab change cannot be read as a gesture on the new
+        # tab. See held_since().
+        self.held[note] = (time.time(), self.mode)
+        self._hold_count.pop(note, None)
+        got = self.rc(note)
+        if not got:
+            return                             # not one of the 64 grid pads
+        lr, lc = got
+        if lr == FUNC_ROW:
+            if lc in TABS:                     # reset pad is hold-only, see render()
+                self.mode = lc
+                if self._editing:
+                    if lc in HAB_MODES:
+                        # window follows the tab: swap the whole table
+                        self._popup_mode = lc
+                        self._popup_send_table('load')
+                        er, ec = self._editing
+                        self._popup_cmd(f'focus\t{er}\t{ec}')
+                    else:
+                        self._popup_cmd('hide')   # left the habit tabs
+                        self._editing = None
+        elif self.mode in HAB_MODES and lr in HAB_ROWS:
+            pass                       # decided on release, or by the hold timer
+        elif self.mode == M_POMO and lr in POMO_ROWS: self.pomo_press(lr, lc)
+        elif self.mode == M_POMO and lr in TOGGLE_ROWS:
+            self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
+            self.save()
+
+    def reset(self):
+        """Reset only what the CURRENT mode owns.
+
+        This used to reset the pomodoros for any non-habit mode, so holding the
+        red pad while looking at the CPU or network meters silently wiped every
+        running timer with nothing on screen to suggest it had.
+        """
+        if self.mode in HAB_MODES:
+            for h in self.habits.values():
+                h['state'] = 0
+            self._popup_send_table()           # the window shows state too
+        elif self.mode == M_POMO:
+            for r in POMO_ROWS:
+                self.rows[r] = {'state': IDLE, 'started': 0.0}
+            self.toggles = {}
+        else:
+            return                             # the meters have nothing to reset
+        self.save()
+
+    # ---- mode 3: habit tracker -------------------------------------------
+    def habit_table(self, mode):
+        """The table belonging to one habit tab, addressed explicitly."""
+        if mode not in HAB_MODES:
+            return {}
+        return self.habit_sets.setdefault(str(mode), {})
+
+    @property
+    def habits(self):
+        """The table for the SELECTED tab, for drawing. Only habit modes have
+        one. Using setdefault() unconditionally created a stray entry for
+        whatever mode happened to be selected."""
+        return self.habit_table(self.mode)
+
+    HAB_STATE_COLOUR = {1: RED, 2: GREEN}      # 0 falls back to the habit's colour
+
+    def habit(self, r, c, mode=None):
+        tbl = self.habits if mode is None else self.habit_table(mode)
+        return tbl.get(f'{r},{c}', {'name': '', 'colour': WHITE, 'state': 0})
+
+    def set_habit(self, r, c, h, mode=None):
+        mode = self.mode if mode is None else mode
+        tbl = self.habit_table(mode)
+        k = f'{r},{c}'
+        # The popup reader thread also lands here, and _flush() serialises
+        # habit_sets: mutate under the same lock or json.dumps() can trip over
+        # a resized dict and lose the whole write.
+        with self._lock:
+            if h.get('name'):
+                tbl[k] = h
+            else:
+                tbl.pop(k, None)               # empty name = habit deleted
+        self.save()
+        if mode == self._popup_mode:
+            self._popup_send_table()
+
+    def render_habits(self):
+        for r in HAB_ROWS:
+            for c in range(CELLS):
+                h = self.habit(r, c)
+                if not h['name']:
+                    col = OFF                  # a habit with no name does not exist
+                else:
+                    col = self.HAB_STATE_COLOUR.get(h.get('state', 0), h.get('colour', WHITE))
+                self.set(pad(r, c), col)
+
+    def edit_habit(self, r, c):
+        """Open the window with this cell selected. Esc is the only way out."""
+        self._popup_mode = self.mode
+        self._popup_send_table()
+        self._popup_cmd(f'edit\t{r}\t{c}')
+        self._editing = (r, c)
+
+    def cycle_state(self, r, c, mode=None):
+        h = dict(self.habit(r, c, mode))
+        if not h['name']:
+            return
+        h['state'] = (h.get('state', 0) + 1) % 3   # unstarted -> started -> complete
+        self.set_habit(r, c, h, mode)              # already repaints the window
+
+    def pomo_press(self, r, c):
+        st = self.rows[r]; s = st['state']
+        if s == IDLE and c == 0:
+            st.update(state=RUNNING, started=time.time())
+            ding('start.wav')
+        elif s == ELAPSED:
+            if c == CELLS - 1: st['state'] = CLAIMED       # claimed it
+            else:              st.update(state=IDLE, started=0)   # failed
+        elif s == CLAIMED and c == 0:
+            st.update(state=IDLE, started=0)
+        self.save()
+
+
+def main():
+    # systemd stops the unit with SIGTERM, whose default action kills the
+    # process outright: the finally: below never ran and up to a second of
+    # state -- a just-started pomodoro -- went with it on every restart.
+    def _term(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
+
+    names = [n for n in mido.get_output_names() if 'MK3' in n or 'Launchpad' in n]
+    ins   = [n for n in mido.get_input_names()  if 'MK3' in n or 'Launchpad' in n]
+    # the MIDI (not DAW) port is the one that honours programmer mode
+    def pick(lst):
+        for n in lst:
+            if 'MI' in n: return n
+        return lst[0] if lst else None
+    o, i = pick(names), pick(ins)
+    if not o or not i:
+        sys.exit(f"Launchpad not found.\n  outputs: {mido.get_output_names()}\n  inputs: {mido.get_input_names()}")
+    print(f"out: {o}\nin : {i}")
+    with mido.open_output(o) as out, mido.open_input(i) as inp:
+        out.send(mido.Message('sysex', data=SYSEX_PROGRAMMER))
+        time.sleep(0.1)
+        b = Board(out); b.clear()
+        try:
+            while True:
+                for m in inp.iter_pending():
+                    if m.type == 'note_on' and m.velocity > 0:
+                        b.press(m.note)
+                    elif m.type == 'note_off' or (m.type == 'note_on' and m.velocity == 0):
+                        b.release(m.note)
+                try:
+                    b.tick()
+                    b.render()
+                except Exception as e:
+                    # keep the board alive; a bad frame is not worth a restart
+                    print(f"tick/render error: {e!r}", flush=True)
+                    time.sleep(0.5)
+                time.sleep(0.05)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Persist FIRST. Anything below is cosmetic teardown that can fail
+            # (a dead popup, a yanked USB cable), and when it did, _flush never
+            # ran and a running pomodoro was silently lost.
+            try:
+                b._flush()
+            except Exception as e:
+                print(f"could not save state: {e!r}", flush=True)
+            try:
+                b._popup_cmd('hide')
+                b.clear(); time.sleep(0.05)
+                out.send(mido.Message('sysex', data=SYSEX_LIVE))
+            except Exception:
+                pass
+            print("\nexited, launchpad restored")
+
+if __name__ == '__main__':
+    main()
