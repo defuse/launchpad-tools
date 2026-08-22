@@ -39,6 +39,12 @@ A pomodoro row, left to right, is its own progress bar:
   state it is in -- the only way to abandon a pomodoro part-way through. It
   fills the row red as it goes, and letting go early cancels.
 
+  Every tab drives the SAME 64 pads, so a press belongs to the tab it was made
+  on and to no other: hold a habit in column 0, switch to the pomodoro tab
+  without letting go, and that hold is not an abandon gesture. The selected tab
+  is saved with the rest of the state, so a restart puts the pads back to
+  meaning what they meant before it.
+
 The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """

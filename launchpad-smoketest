@@ -5,8 +5,16 @@ Twice now a patch has deleted a method while rewriting an adjacent one. The code
 stayed syntactically valid and only blew up when that path was pressed, and Tk
 swallowed the traceback into stderr so it looked like 'nothing happens'. This
 calls every entry point once so that fails loudly at edit time instead.
+
+This is the quick version, with no dependencies. The full suite lives in
+~/.local/share/launchpad-tests -- run it with
+
+    ~/.local/share/launchpad-tests/run-tests
+
+Neither may disturb a live session: this one writes its state to a throwaway
+directory, never spawns the real window, and refuses to open one on :0.
 """
-import types, json, os, sys, io
+import types, json, os, sys, io, tempfile, threading
 
 def load(path, fake_mido=False):
     src = open(path).read().replace("if __name__ == '__main__':", "if False:")
@@ -19,6 +27,26 @@ def load(path, fake_mido=False):
 
 fails = []
 b = load(os.path.expanduser('~/.local/bin/launchpad-pomodoro'), fake_mido=True)
+
+# Everything that would reach outside this process gets replaced BEFORE a Board
+# exists. Building one against the real globals used to load the live state
+# file, start the real background writer and spawn the real window on :0 --
+# and reset(), called below, then wiped the running session.
+sandbox = tempfile.mkdtemp(prefix='launchpad-smoketest-')
+b.STATE_FILE = os.path.join(sandbox, 'state.json')
+b.SOUND_DIR  = os.path.join(sandbox, 'sounds')
+b.PLAYER     = None                                    # no chimes
+class _Popen:                                          # no window
+    def __init__(self, *a, **k): self.stdin, self.stdout = self, iter(())
+    def write(self, s): pass
+    def flush(self): pass
+    def poll(self): return None
+class _Thread:                                         # no background writer
+    def __init__(self, *a, **k): pass
+    def start(self): pass
+b.subprocess = types.SimpleNamespace(Popen=_Popen, PIPE=-1, DEVNULL=-3)
+b.threading  = types.SimpleNamespace(Thread=_Thread, Lock=threading.Lock)
+
 class Out:
     def send(self, *a, **k): pass
 board = b.Board(Out())
@@ -37,9 +65,14 @@ for fn, args in (('cycle_state', (2, 0)), ('edit_habit', (2, 0)), ('reset', ()),
     try: getattr(board, fn)(*args)
     except Exception as e: fails.append(f'Board.{fn}: {e!r}')
 
-if os.environ.get('DISPLAY'):
+display = os.environ.get('DISPLAY', '')
+if display.split('.')[0] in (':0', ':0.0'):
+    # opening a topmost window on the live desktop is not a smoke test
+    print('  (DISPLAY is :0 - skipped the window; run-tests uses its own Xvfb)')
+elif display:
     g = load(os.path.expanduser('~/.local/bin/habit-popup')).Grid()
-    hs = json.load(open(os.path.expanduser('~/.local/share/launchpad-pomodoro.json')))['habit_sets']['1']
+    hs = {'2,0': {'name': 'sample', 'colour': 37, 'state': 0},
+          '3,1': {'name': 'other',  'colour': 13, 'state': 2}}
     buf, old = io.StringIO(), sys.stdout
     sys.stdout = buf
     try:
