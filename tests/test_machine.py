@@ -325,6 +325,19 @@ def with_sub(mod, volumes=TEN, **kw):
                         sources=SOURCES, sub=volumes, **kw)
 
 
+@pytest.fixture
+def live(mod, monkeypatch):
+    """What a fresh read of the interface returns when the pad is pressed.
+
+    The button re-reads rather than using the snapshot, so the tests have to
+    say what the read finds -- which is the point: they can now make the two
+    disagree.
+    """
+    box = {'volumes': TEN}
+    monkeypatch.setattr(mod, 'channel_volumes', lambda sink: box['volumes'])
+    return box
+
+
 def test_the_sub_is_two_channels_of_an_interface_not_a_device(mod):
     """Which is why muting it cannot be pactl set-sink-mute, and why cutting
     its links would not stick: a watcher outside this program restores them."""
@@ -342,7 +355,7 @@ def test_the_sub_pad_shows_whether_it_is_muted(mach, mod, volumes, colour):
     assert painted[2] == getattr(mod, colour)
 
 
-def test_muting_zeroes_only_the_subs_pair(mach, mod):
+def test_muting_zeroes_only_the_subs_pair(mach, mod, live):
     """The other eight channels are written back exactly as they were read:
     pactl takes every channel or none, and the speakers are two of them."""
     press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
@@ -351,21 +364,38 @@ def test_muting_zeroes_only_the_subs_pair(mach, mod):
                              '40000', '40000', '0', '0', '0', '0', '0', '0', '0', '0']]
 
 
-def test_unmuting_restores_the_level_it_had(mach, mod):
+def test_unmuting_restores_the_level_it_had(mach, mod, live):
     """Not a fixed number: whatever the sub was set to is the level it is meant
     to be at."""
     quiet = (40000, 40000, 31000, 31000, 0, 0, 0, 0, 0, 0)   # sub trimmed down
+    live['volumes'] = quiet
     press(mach, mod, 2, with_sub(mod, quiet, sink='game_stereo'))
     assert ran('pactl')[0][5:7] == ['0', '0'], 'muted'
+    live['volumes'] = MUTED
     press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
     assert ran('pactl')[0][5:7] == ['31000', '31000'], 'and given its own level back'
 
 
-def test_unmuting_with_nothing_remembered_matches_the_speakers(mach, mod):
+def test_unmuting_with_nothing_remembered_matches_the_speakers(mach, mod, live):
     """Muted before this program started: the speakers' level is where those
     channels sit by default."""
+    live['volumes'] = MUTED
     press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
     assert ran('pactl')[0][5:7] == ['40000', '40000']
+
+
+def test_a_stale_snapshot_cannot_write_over_the_speakers(mach, mod, live):
+    """THE HAZARD: a volume is set by writing every channel at once, so acting
+    on a reading up to a second old could push stale values back onto channels
+    this button does not own. Here the poll still shows the speakers at zero --
+    caught mid-change by something else -- and the press must not write that.
+    """
+    live['volumes'] = TEN                                  # what is true now
+    stale = (0, 0, 40000, 40000, 0, 0, 0, 0, 0, 0)         # what the poll saw
+    press(mach, mod, 2, with_sub(mod, stale, sink='game_stereo'))
+    written = ran('pactl')[0][3:]
+    assert written[:2] == ['40000', '40000'], 'the speakers keep their real level'
+    assert written[2:4] == ['0', '0'], 'and the sub is the only thing muted'
 
 
 def test_pressing_the_sub_pad_with_no_interface_does_nothing(mach, mod):
@@ -373,7 +403,7 @@ def test_pressing_the_sub_pad_with_no_interface_does_nothing(mach, mod):
     assert ran() == []
 
 
-def test_the_sub_pad_reads_back_rather_than_assuming(mach, mod):
+def test_the_sub_pad_reads_back_rather_than_assuming(mach, mod, live):
     before = mach.machine.snap.sub
     press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
     assert mach.machine.snap.sub == before or mach.machine.snap.sub == TEN

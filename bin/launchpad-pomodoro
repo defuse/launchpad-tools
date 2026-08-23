@@ -826,10 +826,16 @@ class Machine:
         program started -- does it fall back to matching the speakers, which is
         where they sit by default anyway.
         """
-        volumes = list(self.snap.sub)
         sink = match(SUB_SINK, self.snap.sinks)
-        if not sink or len(volumes) <= max(SUB_CHANNELS):
-            return                                     # no sub to mute
+        if not sink:
+            return                                     # no interface, no sub
+        # Read the channels now rather than trusting the snapshot. Setting a
+        # volume means writing every channel at once, so acting on a reading up
+        # to a second old can push a stale value back onto channels this button
+        # has no business touching -- the speakers among them.
+        volumes = list(channel_volumes(sink))
+        if len(volumes) <= max(SUB_CHANNELS):
+            return
         if sub_muted(volumes):
             level = self._sub_level or tuple(volumes[c] for c in MAIN_CHANNELS)
             for channel, value in zip(SUB_CHANNELS, level):
