@@ -27,7 +27,7 @@ blue until an hour is left and then counts itself down: yellow blinking slowly
 from 23:00, orange at the pomodoro cadence from 23:30, red at twice that from
 23:40, rapid red from 23:50, and a panic strobe for the last five minutes.
 
-The machine tab, third from the right, is read-only except its bottom row:
+The machine tab, fourth from the left, is read-only except its bottom row:
 
   row 7   day bar again
   row 6   RAID members, one pad per physical DISK -- green in sync, amber
@@ -41,9 +41,20 @@ The machine tab, third from the right, is read-only except its bottom row:
           changing the output or the effects anywhere else moves the pads.
   rows 4, 2   reserved, drawn dark
 
+  Picking an output picks its processing too: the speakers are corrected by an
+  EQ fitted to the room and the headset is not, so the game_stereo pad turns
+  EasyEffects on and the headset pad bypasses it.
+
 Everything on that tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
-takes a quarter of a second and a frame is 50ms.
+takes a quarter of a second and a frame is 50ms. That query is never used for
+polling anyway -- it starts a second EasyEffects to talk to the first, which
+closes the window the first one has open -- so the bypass state is read out of
+the config file EasyEffects writes it to.
+
+The spectrum tab next to it is the audio you are listening to, captured from
+the current output's monitor and drawn as eight bands with peak markers. It
+follows the output, and the capture only runs while the tab is on screen.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -87,6 +98,10 @@ The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """
 import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum, re, glob
+try:
+    import numpy as np                     # spectrum tab only; the rest runs without
+except ImportError:
+    np = None
 from typing import Callable, NamedTuple
 
 # ---- hardware -------------------------------------------------------------
@@ -117,8 +132,8 @@ HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
 # Tab column -> mode. Columns 3-5 are deliberately empty, and column 7 is the
 # reset pad, so modes are addressed by the column they sit on rather than by
 # a running index.
-M_POMO, M_HAB, M_HAB2, M_MACH, M_SYS, M_NET = 0, 1, 2, 4, 5, 6
-TABS = (M_POMO, M_HAB, M_HAB2, M_MACH, M_SYS, M_NET)
+M_POMO, M_HAB, M_HAB2, M_MACH, M_SPEC, M_SYS, M_NET = 0, 1, 2, 3, 4, 5, 6
+TABS = (M_POMO, M_HAB, M_HAB2, M_MACH, M_SPEC, M_SYS, M_NET)
 HAB_MODES = (M_HAB, M_HAB2)          # each keeps its own independent set
 NET_IFACE = None                     # auto-detected: the default-route interface
 
@@ -336,6 +351,11 @@ FS_LOW, FS_CRIT = 100, 30                  # GB free: yellow under, red under
 GAME_SINK = 'game_stereo'
 HEADSET   = 'AT_ATH-M50xSTS'               # sink AND mic; one button picks both
 SPOTIFY   = 'org.mpris.MediaPlayer2.spotify'
+# EasyEffects writes its bypass state here the moment it changes, which is the
+# only way to read it that does not touch the application. Asking the CLI
+# (`easyeffects -b 3`) starts a second instance to talk to the first, and that
+# closes the window the first one has open -- once a poll, every poll.
+EE_CONF = os.path.expanduser('~/.config/easyeffects/db/easyeffectsrc')
 
 
 class Button(NamedTuple):
@@ -352,7 +372,25 @@ CONTROLS = (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
             Button('media', 'Previous'), Button('media', 'PlayPause'),
             Button('media', 'Next'))
 SELECTED = BLUE                            # the output you are listening on
+PLAYING  = SKY                             # transport, while Spotify is playing
 DISK_OK, DISK_SYNC, DISK_FAIL = GREEN, ORANGE, RED
+
+
+# ---- spectrum -------------------------------------------------------------
+SPEC_ROWS = [1, 2, 3, 4, 5, 6, 7]          # filled from the bottom
+# One hue per column, low to high. The meters are traffic lights -- green up to
+# yellow up to red -- so a rainbow reads as a different instrument entirely,
+# which is the point: you should know which tab you are on at a glance.
+SPEC_HUES = (RED, ORANGE, YELLOW, GREEN, CYAN, SKY, BLUE, MAGENTA)
+SPEC_PEAK = WHITE                          # peak hold, falling back slowly
+SPEC_LO, SPEC_HI = 40, 12000               # Hz, log spaced across the columns
+SPEC_FLOOR, SPEC_CEIL = -52.0, -10.0       # dB at the bottom and top of a column
+# Music carries most of its energy low down -- measured here, the bass bands
+# run about 10dB above the treble on ordinary material -- so without a tilt the
+# right of the board barely moves. 3dB per band is roughly per octave, which is
+# what the columns are.
+SPEC_TILT = 3.0
+SPEC_FALL = 0.6                            # peak hold decay, per second
 
 
 class Widget(enum.Enum):
@@ -374,6 +412,7 @@ class Widget(enum.Enum):
     TEMP   = 'temp'
     BLANK  = 'blank'                   # claimed, deliberately dark
     CONTROL= 'control'
+    SPECTRUM = 'spectrum'
 
 
 # The layout, stated once. press() dispatches on it and render() draws it, so a
@@ -385,6 +424,7 @@ TAB_ROWS = {
     M_MACH: {Widget.DISK: [DISK_ROW], Widget.FS: [FS_ROW],
              Widget.TEMP: [TEMP_ROW], Widget.CONTROL: [CTRL_ROW],
              Widget.BLANK: MACH_BLANK},
+    M_SPEC: {Widget.SPECTRUM: SPEC_ROWS},
     M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
     M_NET:  {Widget.NET: METER_ROWS},
 }
@@ -509,6 +549,25 @@ def hwmon_temp(name, label):
     return None
 
 
+def read_bypass():
+    """EasyEffects' global bypass, straight out of its config file.
+
+    It writes the file the instant the setting changes, so this is as live as
+    asking the application would be, and it costs a read instead of a process.
+    """
+    try:
+        section = ''
+        for line in open(EE_CONF):
+            line = line.strip()
+            if line.startswith('['):
+                section = line
+            elif section == '[EffectsPipelines]' and line.startswith('bypass='):
+                return line.split('=', 1)[1].strip().lower() == 'true'
+    except Exception:
+        pass
+    return False
+
+
 def gpu_temp():
     out = sh('nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader')
     try:
@@ -583,13 +642,16 @@ class Machine:
                         'org.mpris.MediaPlayer2.Player', 'PlaybackStatus'))
 
     def read_effects(self):
-        # Only ask EasyEffects once it is known to be up: the query is a full
-        # application start, and on a GApplication it would launch the thing
-        # it was meant to be reporting on.
+        """Running, and not bypassed.
+
+        Both come from outside EasyEffects: `pgrep`, and the config file it
+        writes its bypass state into. Asking the application itself
+        (`easyeffects -b 3`) starts a second instance to talk to the first,
+        which closes the window the first one has open -- fine as the price of
+        a deliberate press, unacceptable once every poll.
+        """
         running = bool(sh('pgrep', '-x', 'easyeffects').strip())
-        lines = [l.strip() for l in sh('easyeffects', '-b', '3').splitlines() if l.strip()]
-        self.assume(running=running,
-                    effects=running and bool(lines) and lines[-1] == '2')
+        self.assume(running=running, effects=running and not read_bypass())
 
     def read_temps(self):
         readings = []
@@ -606,17 +668,136 @@ class Machine:
         self.assume(disks=parse_mdstat(mdstat),
                     mounts=tuple((m, free_gb(m.path)) for m in MOUNTS))
 
-    # ---- the one action that is not a single command ---------------------
-    def toggle_effects(self):
-        """White to green turns processing on however it was off: a bypassed
-        EasyEffects is unbypassed, a stopped one is started."""
-        if self.snap.effects:
-            spawn('easyeffects', '-b', '1')            # bypass on = effects off
-        elif self.snap.running:
-            spawn('easyeffects', '-b', '2')
-        else:
+    # ---- actions ---------------------------------------------------------
+    def set_effects(self, on):
+        """Turn processing on however it was off: a bypassed EasyEffects is
+        unbypassed, a stopped one is started. Turning it off is bypass, not
+        quitting -- the sink stays and the streams do not have to move."""
+        if on and not self.snap.running:
             spawn('easyeffects', '--gapplication-service')
-        self.assume(effects=not self.snap.effects)
+        elif self.snap.running:
+            spawn('easyeffects', '-b', '1' if not on else '2')
+        self.assume(effects=on)
+
+    def toggle_effects(self):
+        self.set_effects(not self.snap.effects)
+
+
+class Spectrum:
+    """The spectrum of whatever you are actually listening to.
+
+    Captured from the default sink's monitor, so it hears the output after
+    EasyEffects rather than before, and follows the output when it changes.
+
+    Capture runs only while the tab is on screen. bands() starts it, and
+    reap() -- called every frame from tick(), whichever tab is up -- stops it
+    once nothing has asked for a couple of seconds. Sitting on the pomodoro
+    tab should not cost a recording stream.
+    """
+    RATE, WINDOW, IDLE = 24000, 1024, 2.0
+
+    def __init__(self):
+        self.proc = None
+        self.target = ''
+        self.raw = b''
+        self.peaks = [0.0] * CELLS
+        self.asked = 0.0
+        self.seen = 0.0                    # when the peaks last fell back
+        self._lock = threading.Lock()
+        self._edges = None
+
+    # ---- capture ---------------------------------------------------------
+    def _start(self, target):
+        self._stop()
+        self.target = target
+        try:
+            self.proc = subprocess.Popen(
+                # stream.capture.sink is what makes this the sink's monitor
+                # rather than a source: without it pw-record connects happily,
+                # streams at the right rate, and delivers digital silence.
+                ['pw-record', '--target', target, '-P', 'stream.capture.sink=true',
+                 f'--rate={self.RATE}', '--channels=1', '--format=f32',
+                 '--latency=20ms', '-'],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f'pw-record: {e!r}', flush=True)
+            self.proc = None
+            return
+        threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
+
+    def _stop(self):
+        proc, self.proc = self.proc, None
+        self.raw = b''
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _reader(self, proc):
+        """Keep the newest window of samples and nothing else. Falling behind
+        would show a spectrum of what was playing a minute ago."""
+        need = self.WINDOW * 4
+        buf = b''
+        try:
+            while proc.poll() is None:
+                chunk = proc.stdout.read(2048)
+                if not chunk:
+                    break
+                buf = (buf + chunk)[-need:]
+                with self._lock:
+                    self.raw = buf
+        except Exception:
+            pass
+
+    def reap(self, now=None):
+        """Stop capturing if the tab is no longer being drawn."""
+        now = now if now is not None else time.time()
+        if self.proc and now - self.asked > self.IDLE:
+            self._stop()
+
+    # ---- analysis --------------------------------------------------------
+    def edges(self):
+        """FFT bin index at each band boundary: log spaced, because octaves
+        are what ears hear and a linear split would put six of eight columns
+        above 6kHz, where music mostly is not."""
+        if self._edges is None:
+            step = (SPEC_HI / SPEC_LO) ** (1 / CELLS)
+            hz = [SPEC_LO * step ** i for i in range(CELLS + 1)]
+            self._edges = [max(1, int(f * self.WINDOW / self.RATE)) for f in hz]
+        return self._edges
+
+    def bands(self, target, now=None):
+        """(levels, peaks), each CELLS values from 0 to 1."""
+        now = now if now is not None else time.time()
+        self.asked = now
+        if not target:
+            return [0.0] * CELLS, [0.0] * CELLS
+        if not self.proc or target != self.target:
+            self._start(target)
+        with self._lock:
+            raw = self.raw
+        levels = [0.0] * CELLS
+        if np is not None and len(raw) >= self.WINDOW * 4:
+            x = np.frombuffer(raw[-self.WINDOW * 4:], dtype=np.float32)
+            win = np.hanning(len(x))
+            # scaled so a full-scale sine reads 0 dB whatever the window
+            # length: without it every band pins to the top of the column
+            mag = np.abs(np.fft.rfft(x * win)) * 2 / win.sum()
+            edge = self.edges()
+            for c in range(CELLS):
+                lo, hi = edge[c], max(edge[c] + 1, edge[c + 1])
+                # energy across the band, not the average of its bins: an
+                # average divides a tone by however many bins the band happens
+                # to span, which makes the wide top bands read quiet
+                band = mag[lo:min(hi, len(mag))]
+                db = 20 * np.log10(float(np.sqrt(np.sum(band ** 2))) + 1e-9)
+                db += SPEC_TILT * c
+                levels[c] = min(1.0, max(0.0, (db - SPEC_FLOOR) / (SPEC_CEIL - SPEC_FLOOR)))
+        fall = SPEC_FALL * max(0.0, now - self.seen) if self.seen else 0.0
+        self.seen = now
+        self.peaks = [max(l, p - fall) for l, p in zip(levels, self.peaks)]
+        return levels, list(self.peaks)
 
 
 def ding(name):
@@ -652,6 +833,7 @@ class Board:
         self._editing = None                   # (r,c) while the edit window is up
         self._cpu_prev = None
         self.machine = Machine()
+        self.spectrum = Spectrum()
         self._dirty = False
         self._lock = threading.Lock()
         self.load()
@@ -857,6 +1039,8 @@ class Board:
             self.render_bar(bar)
         if self.mode == M_MACH:
             return self.render_machine()
+        if self.mode == M_SPEC:
+            return self.render_spectrum()
         if self.mode == M_SYS:
             return self.render_sys()
         if self.mode == M_NET:
@@ -894,6 +1078,20 @@ class Board:
             if c >= lit:                self.set(p, OFF)
             elif stage and stage.off:   self.flash(p, colour, stage.on, stage.off)
             else:                       self.set(p, colour)
+
+    def render_spectrum(self):
+        """Eight bands, filled from the bottom, one hue per band, with a peak
+        that hangs above the bar and falls back."""
+        levels, peaks = self.spectrum.bands(self.machine.snap.sink)
+        rows = list(reversed(SPEC_ROWS))                  # index 0 is the bottom
+        for c in range(CELLS):
+            lit = int(round(levels[c] * len(rows)))
+            peak = int(round(peaks[c] * len(rows)))
+            for i, r in enumerate(rows):
+                if i < lit:                colour = SPEC_HUES[c]
+                elif peak and i == peak - 1: colour = SPEC_PEAK
+                else:                      colour = OFF
+                self.set(pad(r, c), colour)
 
     def render_machine(self):
         """Disks, filesystems, temperatures and the audio controls."""
@@ -969,7 +1167,7 @@ class Board:
             elif b.kind == 'effects':
                 self.set(p, GREEN if snap.effects else WHITE)
             else:
-                self.set(p, GREEN if b.arg == 'PlayPause' and snap.playing else WHITE)
+                self.set(p, PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE)
 
     def control_press(self, col):
         """Act on the control row. Every action is fired and forgotten, and the
@@ -991,6 +1189,10 @@ class Board:
                 mic = match(HEADSET, snap.sources)
                 if mic:
                     spawn('pactl', 'set-default-source', mic)
+            # Each output has its own idea of processing: the speakers are
+            # corrected by an EQ fitted to the room, the headset is not, and
+            # switching without that is switching to the wrong sound.
+            self.machine.set_effects(b.arg == GAME_SINK)
             self.machine.assume(sink=name)
         elif b.kind == 'effects':
             self.machine.toggle_effects()
@@ -1056,6 +1258,7 @@ class Board:
         """Advance every mode's state, whether or not it is on screen. A
         pomodoro must finish (and chime) while you are looking at another mode."""
         now = time.time()
+        self.spectrum.reap(now)
 
         # habit gestures: holding a cell walks it through its states, one step
         # per second. Only pads pressed on THIS tab count -- a pad still down

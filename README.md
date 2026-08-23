@@ -13,7 +13,7 @@ them; everything else keeps running in the background.
 ```
      0      1       2      3   4    5      6      7
   ┌──────┬───────┬───────┬───┬───┬──────┬──────┬───────┐
-8 │ pomo │ daily │ weekly│   │mch│ cpu  │ net  │ reset │   tabs
+8 │ pomo │ daily │ weekly│mch│spc│ cpu  │ net  │ reset │   tabs
   ├──────┴───────┴───────┴───┴───┴──────┴──────┴───────┤
 7 │            day bar: 8 x 3 h, deep blue             │
   ├────────────────────────────────────────────────────┤
@@ -98,7 +98,7 @@ that is off. The weekly bar never blinks: it is full for a whole day.
 
 ## Machine and audio
 
-Third tab from the right. Everything above the bottom row is read-only:
+Fourth tab. Everything above the bottom row is read-only:
 
 | row | |
 |---|---|
@@ -118,8 +118,31 @@ what the system is actually doing rather than the last thing the board asked
 for — change the output in the tray applet and the pads follow. Picking the
 headset takes its microphone with it.
 
+Picking an output picks its processing with it — the speakers are corrected by
+an EQ fitted to the room and the headset is not, so `game_stereo` turns
+EasyEffects on and the headset bypasses it.
+
 All of it comes from a background poller. Nothing is read during a frame:
-`easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms.
+`easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
+query is never polled at all, in fact — it starts a second EasyEffects to ask
+the first, and that closes the window the first one has open. The bypass state
+comes from the config file EasyEffects writes it to instead.
+
+## Spectrum
+
+Fifth tab: eight bands of whatever you are listening to, captured from the
+current output's monitor with `pw-record`, so it hears what the speakers get —
+EasyEffects included — and follows the output when you switch it. Each band has
+its own hue rather than the meters' green-yellow-red, and a peak marker that
+hangs above the bar and falls back.
+
+Bands are log spaced from 40Hz to 12kHz, with a 3dB-per-band tilt: music
+carries most of its energy low down, so without one the right of the board
+barely moves. `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` are the knobs if it
+sits too high or too low for what you listen to.
+
+Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
+is simply dark.
 
 ## Meters
 
@@ -135,7 +158,7 @@ Needs Python 3, `mido` and `python-rtmidi` for MIDI, and `tkinter` for the habit
 window.
 
 ```sh
-sudo pacman -S python-mido python-rtmidi        # Arch
+sudo pacman -S python-mido python-rtmidi python-numpy   # Arch
 sudo apt install python3-mido python3-rtmidi python3-tk   # Debian/Ubuntu
 
 git clone git@github.com:defuse/launchpad-tools.git
@@ -160,7 +183,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 313 tests, about eight seconds
+tests/run-tests             # 337 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

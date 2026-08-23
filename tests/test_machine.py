@@ -33,8 +33,9 @@ def show(board, mod, snap, r, paint=None):
 
 
 # ---- where the tab lives -------------------------------------------------
-def test_the_machine_tab_is_third_from_the_right(mod):
-    assert sorted(mod.TABS)[-3] == mod.M_MACH
+def test_the_machine_tab_is_the_fourth_one(mod):
+    assert sorted(mod.TABS)[3] == mod.M_MACH
+    assert sorted(mod.TABS)[4] == mod.M_SPEC, 'the spectrum sits next to it'
     assert mod.M_MACH in mod.BARS, 'row 1 is the day bar here too'
 
 
@@ -183,7 +184,7 @@ def test_the_gaps_stay_dark(mach, mod):
 
 def test_effects_and_transport_colours(mach, mod):
     on = show(mach, mod, audio(mod, effects=True, running=True, playing=True), mod.CTRL_ROW)
-    assert on[3] == mod.GREEN and on[6] == mod.GREEN
+    assert on[3] == mod.GREEN and on[6] == mod.PLAYING
     off = show(mach, mod, audio(mod), mod.CTRL_ROW)
     assert off[3] == mod.WHITE and off[6] == mod.WHITE
     assert off[5] == mod.WHITE and off[7] == mod.WHITE
@@ -208,6 +209,44 @@ def test_choosing_the_headset_takes_the_microphone_with_it(mach, mod):
     press(mach, mod, 1, audio(mod, sink='game_stereo'))
     assert ran('pactl') == [['pactl', 'set-default-sink', SINKS[1]],
                             ['pactl', 'set-default-source', SOURCES[0]]]
+
+
+@pytest.mark.parametrize('col,arg,running,expect', [
+    (0, '-b', True,  '2'),        # to the speakers: processing on
+    (1, '-b', True,  '1'),        # to the headset: processing off
+])
+def test_switching_output_carries_its_processing_with_it(mach, mod, col, arg, running, expect):
+    """The speakers are corrected by an EQ fitted to the room and the headset
+    is not, so switching without switching that is switching to the wrong
+    sound."""
+    press(mach, mod, col, audio(mod, sink='', running=running, effects=True))
+    assert ran('easyeffects') == [['easyeffects', arg, expect]]
+
+
+def test_switching_to_the_speakers_starts_a_stopped_easyeffects(mach, mod):
+    press(mach, mod, 0, audio(mod, sink='', running=False, effects=False))
+    assert ran('easyeffects') == [['easyeffects', '--gapplication-service']]
+
+
+def test_switching_to_the_headset_with_easyeffects_stopped_runs_nothing(mach, mod):
+    """Nothing to bypass, and starting it just to bypass it is absurd."""
+    press(mach, mod, 1, audio(mod, sink='', running=False, effects=False))
+    assert ran('easyeffects') == []
+
+
+def test_reading_the_bypass_state_never_touches_easyeffects(mod, tmp_path, monkeypatch):
+    """`easyeffects -b 3` starts a second instance to ask the first, and that
+    closes the window the first one has open. Once a poll, every poll."""
+    conf = tmp_path / 'easyeffectsrc'
+    conf.write_text('[General]\nshowTrayIcon=true\n\n[EffectsPipelines]\nbypass=true\n')
+    monkeypatch.setattr(mod, 'EE_CONF', str(conf))
+    assert mod.read_bypass() is True
+    conf.write_text('[EffectsPipelines]\nbypass=false\n')
+    assert mod.read_bypass() is False
+    conf.write_text('[General]\nbypass=true\n')          # wrong section
+    assert mod.read_bypass() is False
+    conf.unlink()
+    assert mod.read_bypass() is False
 
 
 def test_the_pad_lights_before_the_poll_catches_up(mach, mod):

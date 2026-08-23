@@ -36,6 +36,8 @@ def test_the_pomodoro_tab_shows_the_same_day_as_the_daily_habit_tab(mod):
     ('M_HAB',  'BAR_ROW', 'BAR'),
     ('M_HAB',  2, 'HABIT'),
     ('M_HAB2', 7, 'HABIT'),
+    ('M_SPEC', 1, 'SPECTRUM'),
+    ('M_SPEC', 7, 'SPECTRUM'),
     ('M_SYS',  1, 'CPU'),
     ('M_SYS',  7, 'MEM'),
     ('M_NET',  1, 'NET'),
@@ -69,7 +71,7 @@ def painted(board, mod, out):
     return {board.rc(m.note)[0] for m in out.sent if board.rc(m.note)}
 
 
-TAB_NAMES = ['M_POMO', 'M_HAB', 'M_HAB2', 'M_MACH', 'M_SYS', 'M_NET']
+TAB_NAMES = ['M_POMO', 'M_HAB', 'M_HAB2', 'M_MACH', 'M_SPEC', 'M_SYS', 'M_NET']
 
 
 def test_the_drawing_test_below_covers_every_tab(mod):
