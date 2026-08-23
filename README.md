@@ -11,6 +11,9 @@ running in the background.
 > suite, but nobody has actually read it line by line. Read it yourself before
 > you run it.
 
+Dual licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your
+option — `MIT OR Apache-2.0`.
+
 ## The top row
 
 ```
@@ -302,5 +305,3 @@ Every tab drives the same 64 physical pads, so a press belongs to the tab it was
 made on and no other. Hold a habit in the first column, switch to the pomodoro
 tab without letting go, and that hold is not an abandon gesture. Getting this
 wrong silently wiped running timers for a while.
-
-MIT, see [LICENSE](LICENSE).
