@@ -210,22 +210,16 @@ def test_the_outputs_are_kept_apart_from_the_sub_and_effects(mach, mod):
         ['sink', 'sink', None, 'sub', 'effects']
 
 
-def test_the_transport_has_a_row_of_its_own(mach, mod):
-    """Above the audio controls, so a mis-hit skips a track rather than
-    changing what the speakers are doing."""
-    assert mod.MEDIA_ROW == mod.CTRL_ROW - 1
-    row = mod.CONTROLS[mod.MEDIA_ROW]
-    assert [b.kind if b else None for b in row] == \
-        [None] * 5 + ['media'] * 3
-    painted = show(mach, mod, audio(mod, playing=True), mod.MEDIA_ROW)
-    assert painted[:5] == [mod.OFF] * 5
-    assert painted[6] == mod.PLAYING
+def test_the_whole_control_row_in_order(mach, mod):
+    """Outputs, a gap, the sub and effects, then the transport."""
+    assert [b.kind if b else None for b in mod.CONTROLS[mod.CTRL_ROW]] == \
+        ['sink', 'sink', None, 'sub', 'effects', 'media', 'media', 'media']
 
 
 def test_transport_colours(mach, mod):
-    on = show(mach, mod, audio(mod, playing=True), mod.MEDIA_ROW)
+    on = show(mach, mod, audio(mod, playing=True), mod.CTRL_ROW)
     assert on[6] == mod.PLAYING
-    off = show(mach, mod, audio(mod), mod.MEDIA_ROW)
+    off = show(mach, mod, audio(mod), mod.CTRL_ROW)
     assert off[5] == mod.WHITE and off[6] == mod.WHITE and off[7] == mod.WHITE
 
 
@@ -317,13 +311,12 @@ def test_pressing_an_absent_output_does_nothing_at_all(mach, mod):
 
 def test_pressing_a_gap_does_nothing(mach, mod):
     press(mach, mod, 2, audio(mod, sink='game_stereo'))          # outputs | sub
-    press(mach, mod, 0, audio(mod, sink='game_stereo'), row=mod.MEDIA_ROW)
     assert ran() == []
 
 
 def test_transport_buttons_talk_to_spotify(mach, mod):
     for col, action in ((5, 'Previous'), (6, 'PlayPause'), (7, 'Next')):
-        press(mach, mod, col, audio(mod), row=mod.MEDIA_ROW)
+        press(mach, mod, col, audio(mod), row=mod.CTRL_ROW)
         assert ran('gdbus')[0][-1] == f'org.mpris.MediaPlayer2.Player.{action}'
         assert mod.SPOTIFY in ran('gdbus')[0]
 

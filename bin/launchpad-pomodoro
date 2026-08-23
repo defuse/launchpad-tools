@@ -322,9 +322,8 @@ BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK}
 
 
 # ---- machine and audio ----------------------------------------------------
-DISK_ROW, FS_ROW, TEMP_ROW = 2, 3, 5
-MEDIA_ROW, CTRL_ROW = 6, 7                 # transport above, audio controls below
-MACH_BLANK = [4]                           # reserved, drawn dark
+DISK_ROW, FS_ROW, TEMP_ROW, CTRL_ROW = 2, 3, 5, 7
+MACH_BLANK = [4, 6]                        # reserved, drawn dark
 
 
 class Sensor(NamedTuple):
@@ -406,16 +405,15 @@ class Button(NamedTuple):
     arg:  str
 
 
-# One entry per pad, by row. None is a deliberate gap: choosing an output,
-# silencing the sub and bypassing the effects are different jobs, and a stray
-# press should not fire the wrong one. The transport gets a row of its own for
-# the same reason.
+# One entry per pad, by row. None is a deliberate gap: choosing an output is a
+# different job from silencing the sub, and a stray press should not fire the
+# wrong one. A dict rather than one row's worth, because these have moved
+# before and the layout table below takes the rows from here.
 CONTROLS = {
-    MEDIA_ROW: (None, None, None, None, None,
-                Button('media', 'Previous'), Button('media', 'PlayPause'),
-                Button('media', 'Next')),
-    CTRL_ROW:  (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
-                Button('sub', ''), Button('effects', ''), None, None, None),
+    CTRL_ROW: (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
+               Button('sub', ''), Button('effects', ''),
+               Button('media', 'Previous'), Button('media', 'PlayPause'),
+               Button('media', 'Next')),
 }
 SELECTED = BLUE                            # the output you are listening on
 SUB_ON   = WHITE                           # the sub is passing signal
