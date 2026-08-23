@@ -118,6 +118,11 @@ def row_style(r):
     if r == BREAK_ROW:
         return BREAK_SECS_PER_CELL, SKY, BLUE
     return SECS_PER_CELL, WHITE, GREEN
+
+def row_chime(r):
+    """Which chime a row plays when it elapses. Four strikes for the break and
+    three for a pomodoro, so you can tell which one ended without looking."""
+    return 'break.wav' if r == BREAK_ROW else 'finish.wav'
 STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
 SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
 PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
@@ -450,7 +455,7 @@ class Board:
             if st['state'] == RUNNING and (now - st['started']) >= CELLS * secs:
                 st['state'] = ELAPSED
                 self.save()
-                ding('finish.wav')
+                ding(row_chime(r))
 
     # ---- mode 2: system monitor -----------------------------------------
     def cpu_usage(self):
