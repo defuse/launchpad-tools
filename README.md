@@ -75,10 +75,9 @@ it shows how much of a period has begun. The pomodoro and daily tabs share the
 same day — eight three-hour slices from midnight, deep blue — and the weekly
 tab shows its week, one slice per day from Sunday, deep purple.
 
-A cell lights as its slice *starts* rather than when it ends, so a full bar
-means you are inside the last one. Lighting on the way out would put the final
-cell on the stroke of midnight, replaced by an empty bar in the same instant.
-Seven days share eight cells, so the spare one lights with the seventh.
+A cell lights as its slice *starts*, so a full bar means you are inside the
+last one. Seven days share eight cells, so the spare one lights with the
+seventh and Saturday reads as full.
 
 A full week turns pink — a bar that will sit there all Saturday should not be
 shouting. A full day stays blue: its last three hours are not urgent, they are
@@ -93,9 +92,8 @@ and then counts itself down:
 | 23:50 | red, rapid |
 | 23:55 | red, panic strobe |
 
-Slowing the blink lengthens the lit chunk rather than the gap — a dark chunk
-that grows with the period stops reading as a blink and starts reading as a pad
-that is off. The weekly bar never blinks: it is full for a whole day.
+The weekly bar never blinks: it is full for a whole day, and a day of blinking
+pads is noise.
 
 ## Machine and audio
 
@@ -107,10 +105,10 @@ Fourth tab. Everything above the bottom row is read-only:
 | filesystems | `/`, `/home`, `Data-1`, `Fast-1` — green over 100GB free, yellow under, red under 30GB |
 | temperatures | CPU, GPU, NVMe, thresholds per part: 70°C is a warm CPU and a cooked NVMe |
 
-A pad is the whole drive rather than the partition, since three arrays can
-share a pair of drives and it is the drive that dies. A drive that has gone
-entirely cannot be listed — `/proc/mdstat` only names what is still there — so
-what you see is its array's survivor going amber.
+A pad is a whole drive, not an array member, since several arrays can share a
+pair of drives and it is the drive that dies. A drive that has vanished
+entirely has no pad to light — `/proc/mdstat` only names what is still there —
+so what you see in that case is its array's surviving half going amber.
 
 The bottom row is the only part you can press: output to `game_stereo`, output
 to the headset, a gap, EasyEffects on/off, a gap, then previous, play/pause and
@@ -119,32 +117,20 @@ what the system is actually doing rather than the last thing the board asked
 for — change the output in the tray applet and the pads follow. Picking the
 headset takes its microphone with it.
 
-The output pads show the default sink and nothing else — they do not care what
-EasyEffects is doing. The EasyEffects pad is an on/off switch whose colour says
-which preset is live: white off, green for the room preset, orange for the
-headset one. Which preset counts as the headset one comes from EasyEffects' own
-autoload bindings, so renaming a preset there cannot leave the pad lying.
+The output pads show the default sink and nothing else. The EasyEffects pad is
+an on/off switch whose colour says which preset is live: white off, green for
+the room preset, orange for the headset one — worked out from EasyEffects' own
+autoload bindings, so renaming a preset cannot leave the pad lying.
 
-Both the loaded preset and whether it is bypassed are asked of EasyEffects
-directly, once a second, in a single call. Nothing else knows in time: it
-records them in its config file but writes that file lazily, measured still
-naming the previous preset a minute after autoload had switched it. Reading
-bypass from that file is what used to make a pad spring back to green a second
-after being pressed off — the stale file overwriting the press.
+Every pad here reports rather than remembers. Pressing one fires the command
+and then reads the state back, so what you see is what `pactl` and EasyEffects
+say, never what the board asked for.
 
-Asking costs a process and closes the EasyEffects window if one is open, and it
-asks anyway: a pad that quietly disagrees with the UI is worse than a window
-that shuts, which is at least obvious and stops the moment you leave the tab.
-Nobody looking means nobody asking, so it costs nothing on any other tab.
-
-Pressing a control pad never updates the display. It fires the command off and
-schedules a read-back, so what you see is always what pactl and EasyEffects
-say — a press that fails, or that something else overrides a moment later,
-cannot leave the board asserting a state it only asked for.
-
-All of it comes from a background poller. Nothing is read during a frame:
-`easyeffects -b 3 -a output` alone takes a quarter of a second, and a frame is
-50ms.
+**While this tab is on screen it queries EasyEffects once a second, and that
+closes the EasyEffects window if you have one open.** Any invocation of its CLI
+does — there is no quieter way to ask, and its config file is written too
+lazily to use instead. Switch to another tab while working in the UI; nothing
+is asked from anywhere else.
 
 ## Spectrum
 
@@ -154,19 +140,13 @@ EasyEffects included — and follows the output when you switch it. Each band ha
 its own hue rather than the meters' green-yellow-red, and a peak marker that
 hangs above the bar and falls back.
 
-Bands are log spaced from 40Hz to 12kHz, with a 1.6dB-per-band tilt: music
-carries most of its energy low down — measured on this system the bass bands
-run 1.9dB per band above the treble — so without one the right of the board
-barely moves. Tilting slightly under the measured slope evens the row out while
-leaving bass visibly the loudest, which is what it is. `SPEC_FLOOR`,
-`SPEC_CEIL` and `SPEC_TILT` are the knobs if it sits too high or too low for
-what you listen to.
-
-The board is redrawn at 20fps everywhere else — a pomodoro cell changes every
-three minutes and a CPU column a few times a second — but audio does not move
-on a human timescale, so this tab runs at 50fps. Nothing else was in the way:
-`pw-record` delivers fresh samples at 96Hz, and analysing and drawing a frame
-costs 0.12ms between them.
+Bands are log spaced from bass to treble and tilted, since music carries most
+of its energy low down and an untilted display leaves the right of the board
+dead. It is drawn faster than the rest of the board, which is what audio needs
+and a pomodoro cell does not. If it reads too hot or too cold for what you
+listen to, `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` at the top of
+`bin/launchpad-pomodoro` are the knobs; they are calibrated for this system's
+usual listening level.
 
 Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
 is simply dark.
@@ -222,14 +202,34 @@ desktop, and the service is never touched.
 every entry point once — enough to catch a method that was deleted by a bad
 edit, which is a failure mode this code has had more than once.
 
+## What this assumes about the machine
+
+The timers, habits and bars run anywhere. The machine, spectrum and meter tabs
+are wired to one particular desk, and the names below are constants at the top
+of `bin/launchpad-pomodoro` — change them there and those tabs work elsewhere.
+
+| | |
+|---|---|
+| outputs | a PipeWire sink named `game_stereo`, and any sink whose name contains `AT_ATH-M50xSTS` — matched on a fragment so re-plugging the headset into another port does not break it |
+| microphone | the source matching that same fragment; the headset pad sets both |
+| transport | Spotify, over MPRIS |
+| filesystems | `/`, `$HOME`, `~/Data-1`, `~/Fast-1`, with the yellow and red thresholds beside them |
+| temperatures | an AMD CPU (`k10temp`, `Tctl`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive — thresholds are per part |
+| disks | whatever `/proc/mdstat` lists; no arrays means an empty row, not an error |
+| effects | EasyEffects 8, using its own preset and autoload files under `~/.local/share/easyeffects` |
+| hardware | a Launchpad Mini MK3 in Programmer Mode; other Launchpads use different SysEx and pad numbering |
+
+Preset *names* are not assumed anywhere: which preset is the headset's is read
+from your EasyEffects autoload bindings, so it follows whatever you have set
+up. Everything else on those tabs needs `pactl`, `pw-record`, `gdbus` and
+`nvidia-smi` on `PATH`; a missing one leaves its pads dark rather than
+breaking the board.
+
 ## Notes
 
 Every tab drives the same 64 physical pads, so a press belongs to the tab it was
 made on and no other. Hold a habit in the first column, switch to the pomodoro
 tab without letting go, and that hold is not an abandon gesture. Getting this
 wrong silently wiped running timers for a while.
-
-Written for a Launchpad Mini MK3 in Programmer Mode. Other Launchpads use
-different SysEx and a different pad numbering, so they will not work unmodified.
 
 MIT, see [LICENSE](LICENSE).
