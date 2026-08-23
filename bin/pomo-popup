@@ -30,6 +30,7 @@ import sys, json, re, subprocess, threading, queue
 import tkinter as tk
 
 COLS = 8
+TODO_ROW = 6                               # the row the slots mirror
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 WHITE, RED, GREEN, BLUE = '#e8e8e8', '#ff4444', '#33d17a', '#5a7bff'
 YELLOW_B = '#ffd21a'
@@ -40,11 +41,14 @@ PAD_W, SLOT_W = 108, 150                   # a pad, and the todo slot under it
 
 # What to say about a row, by the state it is actually in. Anything else would
 # be an instruction for a button that is not there.
+# (left of the row, right of the row). An arrow points at the pad it is about,
+# so a hint is attached to a button rather than to a row: the left ones point
+# right at the first pad, the right one points left at the last.
 HINTS = {
-    'idle':    ('\u2190 press the white pad to start a timer', WHITE),
-    'running': ('\u2190 running: hold the left pad 2s to abandon it', GREEN),
-    'elapsed': ('\u2190 done: the green pad claims it, any red writes it off', RED),
-    'claimed': ('\u2190 claimed: the left pad puts it back to idle', GREEN),
+    'idle':    (('click to start \u2192', WHITE), None),
+    'running': (('hold 2s to abandon \u2192', GREEN), None),
+    'elapsed': (('write it off \u2192', RED), ('\u2190 claim it', GREEN)),
+    'claimed': (('hold 2s to clear \u2192', GREEN), None),
 }
 
 
@@ -82,6 +86,8 @@ class Window:
         self.rows = []                     # [{row, kind, state, lit, cells}]
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
         self.drag_from = None
+        self.dragged = False
+        self.on_entry = False
         self.ghost = None
         self._painting = False
         self._fits = []
@@ -100,6 +106,7 @@ class Window:
         outer.pack(expand=True)
         self.outer = outer
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
+        self.row_lefts = {}
         self.slots, self.entries, self.vars = {}, {}, {}
         self.root.bind_all('<Escape>', lambda ev: (self.close(), 'break')[1])
         self.root.withdraw()
@@ -130,15 +137,20 @@ class Window:
         for child in self.outer.winfo_children():
             child.destroy()
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
+        self.row_lefts = {}
         self.slots, self.entries, self.vars = {}, {}, {}
 
         line = 0
         for info in self.rows:
             self.outer.grid_rowconfigure(line, minsize=ROW_H)
-            name = tk.Label(self.outer, text=info.get('name', ''), width=10,
+            name = tk.Label(self.outer, text=info.get('name', ''), width=8,
                             font=('DejaVu Sans', 15), fg=MUTED, bg=BG, anchor='e')
             name.grid(row=line, column=0, sticky='e', padx=(0, 14))
             self.row_names[info['row']] = name
+            left = tk.Label(self.outer, text='', font=('DejaVu Sans', 16),
+                            fg=MUTED, bg=BG, anchor='e', width=22)
+            left.grid(row=line, column=1, sticky='e', padx=(0, 10))
+            self.row_lefts[info['row']] = left
             # the pads share the todo list's columns, so pad c sits directly
             # above slot c and the window is a mirror rather than two rows that
             # happen to have eight of something
@@ -146,13 +158,17 @@ class Window:
             for c in range(COLS):
                 p = tk.Frame(self.outer, bg=CELL_BG, width=PAD_W, height=PAD_W,
                              highlightthickness=3, highlightbackground=BG)
-                p.grid(row=line, column=1 + c, padx=4, pady=4)
+                p.grid(row=line, column=2 + c, padx=4, pady=4)
                 p.grid_propagate(False)
+                p.bind('<ButtonPress-1>',
+                       lambda ev, rr=info['row'], cc=c: say(f'press\t{rr}\t{cc}'))
+                p.bind('<ButtonRelease-1>',
+                       lambda ev, rr=info['row'], cc=c: say(f'release\t{rr}\t{cc}'))
                 cells.append(p)
             self.row_pads[info['row']] = cells
             hint = tk.Label(self.outer, text='', font=('DejaVu Sans', 17),
                             fg=MUTED, bg=BG, anchor='w')
-            hint.grid(row=line, column=1 + COLS, sticky='w', padx=24)
+            hint.grid(row=line, column=2 + COLS, sticky='w', padx=24)
             self.row_hints[info['row']] = hint
             line += 1
 
@@ -160,13 +176,13 @@ class Window:
         self.outer.grid_rowconfigure(line, minsize=24)
         line += 1
         self.outer.grid_rowconfigure(line, minsize=TODO_H)
-        tk.Label(self.outer, text='todo', width=10, font=('DejaVu Sans', 15),
+        tk.Label(self.outer, text='todo', width=8, font=('DejaVu Sans', 15),
                  fg=MUTED, bg=BG, anchor='e').grid(row=line, column=0,
                                                    sticky='e', padx=(0, 14))
         for c in range(COLS):
             f = tk.Frame(self.outer, bg=CELL_BG, width=SLOT_W, height=TODO_H - 16,
                          highlightthickness=4, highlightbackground=BG)
-            f.grid(row=line, column=1 + c, padx=4, pady=4)
+            f.grid(row=line, column=2 + c, padx=4, pady=4)
             f.grid_propagate(False)
             self.slots[c] = f
             handle = tk.Label(f, text='⠿', font=('DejaVu Sans', 15), fg=MUTED,
@@ -180,16 +196,17 @@ class Window:
             e.pack(expand=True, padx=8)
             self.entries[c] = e
             var.trace_add('write', lambda *a, col=c: self.name_typed(col))
+            # The frame and the handle are the pad; the entry is the text box.
+            # Clicking into the text to type is not a press of anything, which
+            # is why the entry only takes the drag bindings and never the tap.
             for w in (f, handle, e):
-                w.bind('<Button-1>', lambda ev, col=c: self.press(col), add='+')
+                w.bind('<Button-1>', lambda ev, col=c: self.grab(col, ev), add='+')
                 w.bind('<B1-Motion>', lambda ev, col=c: self.drag(ev, col), add='+')
                 w.bind('<ButtonRelease-1>', lambda ev, col=c: self.drop(ev), add='+')
-            for w in (f, handle):
-                w.bind('<Double-Button-1>', lambda ev, col=c: self.cycle(col))
         tk.Button(self.outer, text='clear list', font=('DejaVu Sans', 15),
                   bg=CELL_BG, fg=MUTED, relief='flat', activebackground=CELL_BG,
                   activeforeground=WHITE, command=self.clear
-                  ).grid(row=line, column=1 + COLS, sticky='w', padx=24)
+                  ).grid(row=line, column=2 + COLS, sticky='w', padx=24)
 
     # ---- painting --------------------------------------------------------
     def paint(self):
@@ -199,8 +216,11 @@ class Window:
                 for c, colour in enumerate(info.get('cells', [])[:COLS]):
                     pad = self.row_pads[info['row']][c]
                     pad.configure(bg=colour or CELL_BG)
-                hint, tint = HINTS.get(info.get('state', ''), ('', MUTED))
-                self.row_hints[info['row']].configure(text=hint, fg=tint)
+                left, right = HINTS.get(info.get('state', ''), (None, None))
+                self.row_lefts[info['row']].configure(text=left[0] if left else '',
+                                                      fg=left[1] if left else MUTED)
+                self.row_hints[info['row']].configure(text=right[0] if right else '',
+                                                      fg=right[1] if right else MUTED)
             for c in range(COLS):
                 slot = self.todo[c]
                 bg = STATE_BG.get(slot.get('state', 0), CELL_BG)
@@ -221,24 +241,24 @@ class Window:
         self.todo[col]['name'] = name
         say(f'set\t{col}\t{name}')
 
-    def cycle(self, col):
-        state = (self.todo[col].get('state', 0) + 1) % 3
-        self.todo[col]['state'] = state
-        say(f'state\t{col}\t{state}')
-        self.paint()
-
     def clear(self):
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
         say('clear')
         self.paint()
 
-    # ---- drag to move ----------------------------------------------------
-    def press(self, col):
+    # ---- drag to move, tap to press --------------------------------------
+    def grab(self, col, ev):
+        """Start of a gesture on a slot. Which gesture it turns out to be is
+        decided on release: no movement and not in the text box makes it a tap
+        on the pad, movement makes it a drag."""
         self.drag_from = col
+        self.dragged = False
+        self.on_entry = ev.widget is self.entries.get(col)
 
     def drag(self, ev, col):
         if self.drag_from is None:
             return
+        self.dragged = True
         if self.ghost is None:
             name = self.todo[self.drag_from].get('name') or '(empty)'
             g = tk.Toplevel(self.root)
@@ -253,8 +273,16 @@ class Window:
 
     def drop(self, ev):
         src, self.drag_from = self.drag_from, None
+        dragged, self.dragged = self.dragged, False
         self.kill_ghost()
         if src is None:
+            return
+        if not dragged:
+            # a tap: the same thing pressing the pad does, unless it was a
+            # click into the text box, which is just putting a cursor there
+            if not self.on_entry:
+                say(f'press\t{TODO_ROW}\t{src}')
+                say(f'release\t{TODO_ROW}\t{src}')
             return
         dst = self.slot_under(ev.x_root, ev.y_root)
         if dst is None or dst == src:

@@ -80,12 +80,23 @@ def test_elapsed_claim_and_fail(board, mod, clock):
     assert board.rows[2] == {'state': mod.IDLE, 'started': 0}
 
 
-def test_claimed_leftmost_returns_to_idle(board, mod):
+def test_a_claimed_row_is_not_cleared_by_a_press(board, mod, clock):
+    """A claimed row is a finished pomodoro worth keeping on the board, and one
+    brushed pad used to wipe it. It goes through the hold now."""
+    board.mode = mod.M_POMO
     board.rows[5] = {'state': mod.CLAIMED, 'started': 7.0}
-    board.press(mod.pad(5, 4))
-    assert board.rows[5]['state'] == mod.CLAIMED, 'only the leftmost pad resets it'
+    for c in (4, 0):
+        board.press(mod.pad(5, c)); board.release(mod.pad(5, c))
+        assert board.rows[5]['state'] == mod.CLAIMED, f'a tap on pad {c} kept it'
+
+
+def test_holding_the_left_pad_clears_a_claimed_row(board, mod, clock):
+    board.mode = mod.M_POMO
+    board.rows[5] = {'state': mod.CLAIMED, 'started': 7.0}
     board.press(col0(mod, 5))
-    assert board.rows[5] == {'state': mod.IDLE, 'started': 0}
+    clock.advance(mod.RESET_HOLD + 0.1)
+    board.render()                                   # the hold fires while drawing
+    assert board.rows[5] == {'state': mod.IDLE, 'started': 0.0}
 
 
 def test_render_draws_the_progress_bar(board, mod, clock, out):
@@ -127,11 +138,15 @@ def test_pressing_a_running_row_changes_nothing_and_is_silent(board, mod, clock)
     assert mod.dings == []
 
 
-def test_recycling_a_claimed_row_takes_two_presses(board, mod, clock):
-    """Documented behaviour, not a bug: claimed -> idle -> running. Only the
-    second press starts a pomodoro, so only the second one chimes."""
+def test_recycling_a_claimed_row_is_a_hold_then_a_press(board, mod, clock):
+    """claimed -> idle -> running, and the first step is deliberately awkward:
+    clearing a finished pomodoro should take more than a brush."""
+    board.mode = mod.M_POMO
     board.rows[ROW] = {'state': mod.CLAIMED, 'started': 5.0}
-    board.press(col0(mod, ROW)); board.release(col0(mod, ROW))
+    board.press(col0(mod, ROW))
+    clock.advance(mod.RESET_HOLD + 0.1)
+    board.render()
+    board.release(col0(mod, ROW))
     assert board.rows[ROW]['state'] == mod.IDLE
     assert mod.dings == []
     clock.advance(0.5)
@@ -519,7 +534,7 @@ def test_a_second_break_warns_again(board, mod, clock):
     clock.advance(mod.BREAK.warn[0] + 1); board.tick()
     clock.advance(mod.CELLS * mod.BREAK.step); board.tick()
     board.pomo_press(mod.BREAK_ROW, mod.CELLS - 1)          # claim it
-    board.pomo_press(mod.BREAK_ROW, 0)                      # back to idle
+    board.rows[mod.BREAK_ROW].update(state=mod.IDLE, started=0)   # as a hold would
     mod.dings.clear()
     board.pomo_press(mod.BREAK_ROW, 0)                      # start a second break
     assert board.rows[mod.BREAK_ROW].get('warned') is False
@@ -532,3 +547,57 @@ def test_pomodoro_rows_have_no_warning(board, mod, clock):
     board.rows[ROW] = {'state': mod.RUNNING, 'started': clock.time() - 99_999}
     board.tick()
     assert [d[1] for d in mod.dings] == ['finish.wav']
+
+
+# ---- the window's cells are the pads -------------------------------------
+
+def feed_pomo(board, lines):
+    """Run the pomodoro window's reader over a canned stdout."""
+    board._pomo_popup.stdout = iter([l + '\n' for l in lines])
+    board._pomo_reader()
+
+
+@pytest.fixture
+def mirror(board, mod, clock):
+    board.mode = mod.M_POMO
+    tap(board, mod, clock)                      # the red pad opens the window
+    return board
+
+
+def test_a_click_in_the_window_starts_the_timer_it_mirrors(mirror, mod):
+    feed_pomo(mirror, [f'press\t{ROW}\t0', f'release\t{ROW}\t0'])
+    assert mirror.rows[ROW]['state'] == mod.RUNNING
+
+
+def test_a_hold_in_the_window_abandons_like_a_held_pad(mirror, mod, clock):
+    """The same entry points as the pads, so the two second hold is the two
+    second hold and not a second implementation of it."""
+    mirror.rows[ROW] = {'state': mod.RUNNING, 'started': clock.time()}
+    feed_pomo(mirror, [f'press\t{ROW}\t0'])
+    clock.advance(mod.RESET_HOLD + 0.1)
+    mirror.render()
+    assert mirror.rows[ROW]['state'] == mod.IDLE
+
+
+def test_a_tap_on_a_slot_cycles_it_as_the_pad_would(mirror, mod):
+    feed_pomo(mirror, [f'press\t{mod.TODO_ROW}\t2', f'release\t{mod.TODO_ROW}\t2'])
+    assert mirror.todo[2]['state'] == 1
+
+
+def test_a_claimed_row_survives_a_click_from_the_window_too(mirror, mod):
+    mirror.rows[ROW] = {'state': mod.CLAIMED, 'started': 5.0}
+    feed_pomo(mirror, [f'press\t{ROW}\t0', f'release\t{ROW}\t0'])
+    assert mirror.rows[ROW]['state'] == mod.CLAIMED
+
+
+def test_the_window_can_rename_and_move_slots(mirror, mod):
+    feed_pomo(mirror, ['set\t0\twrite tests', 'set\t1\tfix sub',
+                       'state\t0\t2', 'move\t0\t3'])
+    assert [t['name'] for t in mirror.todo[:4]] == ['fix sub', '', '', 'write tests']
+    assert mirror.todo[3]['state'] == 2, 'the state travelled with the name'
+
+
+def test_the_window_can_clear_the_list(mirror, mod):
+    mirror.todo[0] = {'name': 'a', 'state': 1}
+    feed_pomo(mirror, ['clear'])
+    assert mirror.todo == mod.blank_todo()

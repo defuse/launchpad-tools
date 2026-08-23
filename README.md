@@ -51,8 +51,10 @@ b  pale blue    c  the habit's own colour    *  blinking
 
 Rows 2 to 5 are four independent timers, drawn above in the four states one can
 be in. A row fills left to right with the current pad blinking, and when it runs
-out the whole row goes red with a green pad on the end. Either answer puts it
-back to idle, and the left pad starts it again.
+out the whole row goes red with a green pad on the end. Writing it off puts the
+row back to idle; claiming it leaves the row green, and clearing that takes the
+same two-second hold as abandoning — a finished pomodoro should not be wiped by
+a brushed pad.
 
 Holding the leftmost pad for two seconds abandons a running timer — the only way
 to stop one part way through, deliberately awkward.
@@ -83,14 +85,19 @@ so you can tell what happened without looking:
 
 ### The pomodoro window
 
-A mirror of the pads, annotated with what you can do *now*: an idle row is told
-how to start, a running one how to abandon, an elapsed one how to claim or
-write it off. A hint for something that is not currently possible would be a
-hint in the way, so nothing is said about claiming until there is something to
-claim.
+A mirror of the pads, annotated with what you can do *now*. Each hint points at
+the pad it is about — from the left at the pad that starts or clears a row, and
+from the right at the green pad that claims an elapsed one — and only appears
+for a state that actually exists, since an instruction for a button that is not
+there is an instruction in the way.
 
-The todo list is edited here — type a name, double-click to cycle a state, drag
-a slot to move it. A drag is a *move*, not a swap: everything between the slot
+**The cells are the pads.** Clicking one does what pressing the pad does, and
+holding one holds it, through the same code — so a two-second hold in the window
+abandons a timer exactly as it does on the board. Clicking into a todo text box
+to type is not a press.
+
+The todo list is edited here — type a name, click a slot to cycle its state,
+drag a slot to move it. A drag is a *move*, not a swap: everything between the slot
 and where it lands shifts by one, in whichever direction that turns out to be,
 and each slot carries its own state along with it. `clear list` empties them
 all.
@@ -325,7 +332,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 460 tests, about fifteen seconds
+tests/run-tests             # 467 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

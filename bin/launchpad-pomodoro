@@ -1224,6 +1224,12 @@ class Board:
                     self._pomo_send()
                 elif f[0] == 'clear':
                     self.clear_todo()
+                elif f[0] in ('press', 'release') and len(f) == 3:
+                    # a cell in the window is the pad it mirrors: the same
+                    # entry points, so holding one abandons a timer exactly as
+                    # holding the pad does
+                    note = pad(int(f[1]), int(f[2]))
+                    (self.press if f[0] == 'press' else self.release)(note)
         except Exception as e:
             print(f'pomo reader stopped: {e!r}', flush=True)
 
@@ -2206,8 +2212,10 @@ class Board:
         elif s == ELAPSED:
             if c == CELLS - 1: st['state'] = CLAIMED       # claimed it
             else:              st.update(state=IDLE, started=0)   # failed
-        elif s == CLAIMED and c == 0:
-            st.update(state=IDLE, started=0)
+        # A claimed row is a finished pomodoro worth keeping on the board, and
+        # it used to take one brushed pad to wipe it. Clearing it now goes
+        # through the same two second hold that abandons a running one, which
+        # render_timers already applies to any state.
         self.save()
 
 
