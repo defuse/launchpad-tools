@@ -362,6 +362,14 @@ FS_LOW, FS_CRIT = 100, 30                  # GB free: yellow under, red under
 GAME_SINK = 'game_stereo'
 HEADSET   = 'AT_ATH-M50xSTS'               # sink AND mic; one button picks both
 SPOTIFY   = 'org.mpris.MediaPlayer2.spotify'
+# The subwoofer is not a device: it is two channels of the interface, fed by
+# links from the speakers' own output. Muting it means taking those two
+# channels of that sink to zero and leaving the other eight alone -- not
+# cutting the links, which a watcher outside this program restores within five
+# seconds, and not touching the interface itself.
+SUB_SINK = 'TASCAM_SERIES_208i'
+SUB_CHANNELS  = (2, 3)                     # LINE OUT 3/4, the sub's pair
+MAIN_CHANNELS = (0, 1)                     # the speakers, and the level to match
 # EasyEffects writes its bypass state here the moment it changes, which is the
 # only way to read it that does not touch the application. Asking the CLI
 # (`easyeffects -b 3`) starts a second instance to talk to the first, and that
@@ -378,18 +386,21 @@ PRESET_MAIN    = GREEN                     # effects on, out through the room
 
 class Button(NamedTuple):
     """One pad on the control row: what it shows and what it does."""
-    kind: str                              # sink | effects | media
+    kind: str                              # sink | sub | effects | media
     arg:  str
 
 
-# Left to right, one per pad. None is a deliberate gap: the outputs, the
-# effects toggle and the transport are three different jobs and a stray press
-# should not fire the wrong one.
-CONTROLS = (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
+# Left to right, one per pad. The remaining None is a deliberate gap: the
+# outputs and sub, the effects toggle and the transport are different jobs and
+# a stray press should not fire the wrong one.
+CONTROLS = (Button('sink', GAME_SINK), Button('sink', HEADSET),
+            Button('sub', ''),
             Button('effects', ''), None,
             Button('media', 'Previous'), Button('media', 'PlayPause'),
             Button('media', 'Next'))
 SELECTED = BLUE                            # the output you are listening on
+SUB_ON   = WHITE                           # the sub is passing signal
+SUB_MUTE = RED                             # ...and now it is not
 PLAYING  = SKY                             # transport, while Spotify is playing
 DISK_OK, DISK_SYNC, DISK_FAIL = GREEN, ORANGE, RED
 
@@ -572,6 +583,25 @@ def hwmon_temp(name, label):
     return None
 
 
+def channel_volumes(sink):
+    """Every channel volume of a sink, raw, in channel order.
+
+    Matches the aux0..aux9 form a multichannel device reports, and nothing
+    else: the sub lives on two channels of such a device or it does not exist.
+    """
+    if not sink:
+        return ()
+    return tuple(int(v) for v in
+                 re.findall(r'aux\d+:\s+(\d+)', sh('pactl', 'get-sink-volume', sink)))
+
+
+def sub_muted(volumes):
+    """Is the subwoofer's pair silenced? False if there is no sub to ask about."""
+    if len(volumes) <= max(SUB_CHANNELS):
+        return False
+    return all(volumes[c] == 0 for c in SUB_CHANNELS)
+
+
 def headset_preset():
     """The preset EasyEffects autoloads for the headset, or ''.
 
@@ -608,6 +638,7 @@ class Snapshot(NamedTuple):
     sinks:   tuple = ()                # node names currently available
     sources: tuple = ()
     sink:    str = ''                  # the default sink, however it got set
+    sub:     tuple = ()                # every channel volume of the sub's interface
     running: bool = False              # EasyEffects is up at all
     effects: bool = False              # ...and not bypassed
     preset:  str = ''                  # the output preset it has loaded
@@ -634,6 +665,7 @@ class Machine:
         self.watched = 0.0             # when the tab was last drawn
         self.recheck_at = 0.0          # a press is waiting to be read back
         self._due = {}                 # job -> when it last ran
+        self._sub_level = ()           # the sub's level before it was muted
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -691,7 +723,9 @@ class Machine:
         def names(kind):
             return tuple(l.split('\t')[1] for l in sh('pactl', 'list', 'short', kind).splitlines()
                          if '\t' in l and not l.split('\t')[1].endswith('.monitor'))
-        self.assume(sinks=names('sinks'), sources=names('sources'),
+        sinks = names('sinks')
+        self.assume(sinks=sinks, sources=names('sources'),
+                    sub=channel_volumes(match(SUB_SINK, sinks)),
                     sink=sh('pactl', 'get-default-sink').strip(),
                     playing='Playing' in sh(
                         'gdbus', 'call', '--session', '--dest', SPOTIFY,
@@ -781,6 +815,33 @@ class Machine:
 
     def toggle_effects(self):
         self.set_effects(not self.snap.effects)
+
+    def toggle_sub(self):
+        """Silence the sub's two channels, or give them their level back.
+
+        The level restored is the one they had when they were muted, not a
+        fixed number and not the mains': that is the level the sub is meant to
+        be at, and nothing else on the system writes these channels, so it
+        stays true. Only when there is nothing remembered -- muted before this
+        program started -- does it fall back to matching the speakers, which is
+        where they sit by default anyway.
+        """
+        volumes = list(self.snap.sub)
+        sink = match(SUB_SINK, self.snap.sinks)
+        if not sink or len(volumes) <= max(SUB_CHANNELS):
+            return                                     # no sub to mute
+        if sub_muted(volumes):
+            level = self._sub_level or tuple(volumes[c] for c in MAIN_CHANNELS)
+            for channel, value in zip(SUB_CHANNELS, level):
+                volumes[channel] = value
+        else:
+            self._sub_level = tuple(volumes[c] for c in SUB_CHANNELS)
+            for channel in SUB_CHANNELS:
+                volumes[channel] = 0
+        # every channel has to be given, so the other eight are passed back
+        # exactly as they were read rather than reset to anything
+        spawn('pactl', 'set-sink-volume', sink, *(str(v) for v in volumes))
+        self.recheck()
 
 
 class Spectrum:
@@ -1287,6 +1348,10 @@ class Board:
                 name = match(b.arg, snap.sinks)
                 if not name:   self.set(p, OFF)            # unplugged, or gone
                 else:          self.set(p, SELECTED if name == snap.sink else WHITE)
+            elif b.kind == 'sub':
+                if not snap.sub:   self.set(p, OFF)         # no interface, no sub
+                else:              self.set(p, SUB_MUTE if sub_muted(snap.sub)
+                                            else SUB_ON)
             elif b.kind == 'effects':
                 # Off is off whichever preset would have been loaded; on says
                 # which one is, because getting the room's EQ in headphones
@@ -1331,6 +1396,8 @@ class Board:
             # before there was a headset preset -- would make that preset
             # unreachable from the board.
             self.machine.recheck()
+        elif b.kind == 'sub':
+            self.machine.toggle_sub()                      # recheck()s itself
         elif b.kind == 'effects':
             self.machine.toggle_effects()                  # recheck()s itself
         else:

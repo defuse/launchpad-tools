@@ -190,9 +190,12 @@ def test_an_unplugged_headset_leaves_its_pad_dark(mach, mod):
     assert painted[1] == mod.OFF, 'nothing to switch to'
 
 
-def test_the_gaps_stay_dark(mach, mod):
+def test_the_gap_stays_dark(mach, mod):
+    """One gap left, between the outputs and the transport: they are different
+    jobs and a stray press should not fire the wrong one."""
     painted = show(mach, mod, audio(mod, sink='game_stereo'), mod.CTRL_ROW)
-    assert painted[2] == mod.OFF and painted[4] == mod.OFF
+    assert painted[4] == mod.OFF
+    assert mod.CONTROLS[4] is None and mod.CONTROLS[2] is not None
 
 
 def test_transport_colours(mach, mod):
@@ -310,6 +313,90 @@ def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, e
     assert ran('easyeffects') == [expect]
     assert mach.machine.snap.effects is effects, 'unchanged until it is read back'
     assert mach.machine.recheck_at > 0
+
+
+# ---- the subwoofer ------------------------------------------------------
+TEN = (40000, 40000, 40000, 40000, 0, 0, 0, 0, 0, 0)      # a 10-channel interface
+MUTED = (40000, 40000, 0, 0, 0, 0, 0, 0, 0, 0)
+
+
+def with_sub(mod, volumes=TEN, **kw):
+    return mod.Snapshot(sinks=SINKS + ('alsa_output.usb-TASCAM_SERIES_208i-00.multichannel',),
+                        sources=SOURCES, sub=volumes, **kw)
+
+
+def test_the_sub_is_two_channels_of_an_interface_not_a_device(mod):
+    """Which is why muting it cannot be pactl set-sink-mute, and why cutting
+    its links would not stick: a watcher outside this program restores them."""
+    assert mod.SUB_CHANNELS == (2, 3)
+    assert mod.MAIN_CHANNELS == (0, 1)
+
+
+@pytest.mark.parametrize('volumes,colour', [
+    (TEN,   'SUB_ON'),
+    (MUTED, 'SUB_MUTE'),
+    ((),    'OFF'),                                        # no interface, no sub
+])
+def test_the_sub_pad_shows_whether_it_is_muted(mach, mod, volumes, colour):
+    painted = show(mach, mod, with_sub(mod, volumes, sink='game_stereo'), mod.CTRL_ROW)
+    assert painted[2] == getattr(mod, colour)
+
+
+def test_muting_zeroes_only_the_subs_pair(mach, mod):
+    """The other eight channels are written back exactly as they were read:
+    pactl takes every channel or none, and the speakers are two of them."""
+    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    assert ran('pactl') == [['pactl', 'set-sink-volume',
+                             'alsa_output.usb-TASCAM_SERIES_208i-00.multichannel',
+                             '40000', '40000', '0', '0', '0', '0', '0', '0', '0', '0']]
+
+
+def test_unmuting_restores_the_level_it_had(mach, mod):
+    """Not a fixed number: whatever the sub was set to is the level it is meant
+    to be at."""
+    quiet = (40000, 40000, 31000, 31000, 0, 0, 0, 0, 0, 0)   # sub trimmed down
+    press(mach, mod, 2, with_sub(mod, quiet, sink='game_stereo'))
+    assert ran('pactl')[0][5:7] == ['0', '0'], 'muted'
+    press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
+    assert ran('pactl')[0][5:7] == ['31000', '31000'], 'and given its own level back'
+
+
+def test_unmuting_with_nothing_remembered_matches_the_speakers(mach, mod):
+    """Muted before this program started: the speakers' level is where those
+    channels sit by default."""
+    press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
+    assert ran('pactl')[0][5:7] == ['40000', '40000']
+
+
+def test_pressing_the_sub_pad_with_no_interface_does_nothing(mach, mod):
+    press(mach, mod, 2, mod.Snapshot(sinks=SINKS, sink='game_stereo'))
+    assert ran() == []
+
+
+def test_the_sub_pad_reads_back_rather_than_assuming(mach, mod):
+    before = mach.machine.snap.sub
+    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    assert mach.machine.snap.sub == before or mach.machine.snap.sub == TEN
+    assert mach.machine.recheck_at > 0
+
+
+def test_reading_the_channel_volumes(mod, monkeypatch):
+    reply = ('Volume: aux0: 65536 / 100% / 0.00 dB,   aux1: 65536 / 100% / 0.00 dB,   '
+             'aux2: 0 / 0% / -inf dB,   aux3: 0 / 0% / -inf dB\n        balance 0.00\n')
+    monkeypatch.setattr(mod, 'sh', lambda *a, **k: reply)
+    assert mod.channel_volumes('tascam') == (65536, 65536, 0, 0)
+    assert mod.sub_muted((65536, 65536, 0, 0)) is True
+    assert mod.sub_muted((65536, 65536, 65536, 65536)) is False
+    assert mod.sub_muted((65536, 65536)) is False, 'a stereo sink has no sub'
+    assert mod.channel_volumes('') == ()
+
+
+def test_a_stereo_sink_is_not_mistaken_for_the_interface(mod, monkeypatch):
+    """front-left/front-right deliberately do not match: the sub lives on a
+    multichannel device or nowhere."""
+    monkeypatch.setattr(mod, 'sh', lambda *a, **k:
+                        'Volume: front-left: 26212 / 40%,   front-right: 26212 / 40%\n')
+    assert mod.channel_volumes('game_stereo') == ()
 
 
 # ---- asking EasyEffects which preset is loaded ---------------------------

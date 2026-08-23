@@ -104,7 +104,7 @@ unstarted.
  4   ·  ·  ·  ·  ·  ·  ·  ·
  5   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
  6   ·  ·  ·  ·  ·  ·  ·  ·
- 7   B  W  ·  G  ·  W  S  W     speakers · headset | effects | prev play next
+ 7   B  W  W  G  ·  W  S  W     speakers · headset · sub | effects | prev play next
 ```
 
 Everything above the bottom row is read-only:
@@ -121,7 +121,11 @@ has no pad to light — `/proc/mdstat` only names what is still there — so wha
 you see in that case is its array's surviving half going amber.
 
 The bottom row is the only part you can press. The two output pads are white
-with the current one blue; picking the headset takes its microphone with it. The
+with the current one blue; picking the headset takes its microphone with it.
+Next to them the subwoofer pad is white while the sub is passing signal and red
+while it is muted — muting takes its two channels of the interface to zero and
+leaves the other eight alone, and unmuting gives them back the level they had.
+The
 EasyEffects pad is an on/off switch whose colour says which preset is live:
 white off, green for the room preset, orange for the headset one — worked out
 from EasyEffects' own autoload bindings, so renaming a preset cannot leave the
@@ -271,7 +275,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 362 tests, about nine seconds
+tests/run-tests             # 373 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
@@ -297,6 +301,7 @@ of `bin/launchpad-pomodoro` — change them there and those tabs work elsewhere.
 | filesystems | `/`, `$HOME`, `~/Data-1`, `~/Fast-1`, with the yellow and red thresholds beside them |
 | temperatures | an AMD CPU (`k10temp`, `Tctl`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive — thresholds are per part |
 | disks | whatever `/proc/mdstat` lists; no arrays means an empty row, not an error |
+| subwoofer | two channels of a multichannel interface (`TASCAM_SERIES_208i`, LINE OUT 3/4), fed by links something else maintains — the pad only sets those channels' volume |
 | effects | EasyEffects 8, using its own preset and autoload files under `~/.local/share/easyeffects` |
 | hardware | a Launchpad Mini MK3 in Programmer Mode; other Launchpads use different SysEx and pad numbering |
 
