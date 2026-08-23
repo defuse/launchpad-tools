@@ -53,13 +53,17 @@ def chime(path, f0, n, gap, tail, decay, peak_db=-14.0, beat=0.7):
     return len(y) / SR
 
 
+# Peaks are 6dB up from where they started -- twice the amplitude -- which
+# still leaves 8dB of headroom, so nothing here can clip. The generator
+# normalises to these figures rather than scaling, so raising one is a matter
+# of changing the number and not of checking what came out.
 SOUNDS = {
     #                  f0     n  gap  tail  decay  peak
-    'start.wav':      (660.0, 1, 1.0, 3.5,  1.50, -14.0),
-    'finish.wav':     (440.0, 3, 1.0, 6.0,  0.85, -14.0),
-    'break.wav':      (440.0, 4, 1.0, 6.0,  0.85, -14.0),
+    'start.wav':      (660.0, 1, 1.0, 3.5,  1.50,  -8.0),
+    'finish.wav':     (440.0, 3, 1.0, 6.0,  0.85,  -8.0),
+    'break.wav':      (440.0, 4, 1.0, 6.0,  0.85,  -8.0),
     # higher, faster and quieter: a nudge, not an announcement
-    'break-warn.wav': (880.0, 2, 0.28, 1.6, 3.20, -16.0),
+    'break-warn.wav': (880.0, 2, 0.28, 1.6, 3.20, -10.0),
 }
 
 if __name__ == '__main__':

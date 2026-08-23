@@ -41,7 +41,10 @@ mkdir -p "$BIN" "$SHARE" "$(dirname "$UNIT")"
 for p in "${PROGS[@]}"; do
     ln -sfn "$REPO/bin/$p" "$BIN/$p"
 done
-cp -n "$REPO"/share/sounds/*.wav "$SHARE/" 2>/dev/null || true
+# -u, not -n: the programs are symlinks and follow a pull, and the chimes have
+# to as well or a regenerated one never reaches the running board. A chime you
+# edited yourself is newer than the repo's and survives.
+cp -u "$REPO"/share/sounds/*.wav "$SHARE/" 2>/dev/null || true
 sed "s|%h/.local/bin|$BIN|g" "$REPO/systemd/launchpad-pomodoro.service" > "$UNIT"
 
 echo "Installed to $BIN (symlinks into $REPO)"
