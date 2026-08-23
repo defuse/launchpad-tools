@@ -16,7 +16,7 @@ running in the background.
 ```
        0      1      2      3      4      5      6      7
     ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┐
- 8  │ pomo │daily │weekly│ mach │ spec │ cpu  │ net  │ reset │
+ 0  │ pomo │daily │weekly│ mach │ spec │ cpu  │ net  │ reset │
     └──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┘
 ```
 
@@ -25,7 +25,8 @@ hold-only: two seconds clears what the current tab owns, and the row fills red
 as it goes so you can see it coming. A quick tap instead closes the habit
 window.
 
-The diagrams below show one tab each, rows 7 down to 1. In them:
+The diagrams below show one tab each, counting down from the row under the tabs
+to the bottom of the board — the same numbering the code uses. In them:
 
 ```
 ·  off        W  white     G  green    R  red      B  blue
@@ -36,16 +37,16 @@ c  the habit's own colour               *  blinking
 ## Timers
 
 ```
- 7   B  B  B  ·  ·  ·  ·  ·     day bar
- 6   W  ·  ·  ·  ·  ·  ·  ·     idle — press the left pad to start
- 5   G  G  G* ·  ·  ·  ·  ·     running — 3 min per pad
+ 1   B  B  B  ·  ·  ·  ·  ·     day bar
+ 2   W  ·  ·  ·  ·  ·  ·  ·     idle — press the left pad to start
+ 3   G  G  G* ·  ·  ·  ·  ·     running — 3 min per pad
  4   R  R  R  R  R  R  R  G     elapsed — green claims it, red writes it off
- 3   G  G  G  G  G  G  G  G     claimed
- 2   ·  R  G  ·  ·  ·  ·  ·     toggles — press cycles off / red / green
- 1   B  B  B* ·  ·  ·  ·  ·     break — 1 min per pad
+ 5   G  G  G  G  G  G  G  G     claimed
+ 6   ·  R  G  ·  ·  ·  ·  ·     toggles — press cycles off / red / green
+ 7   B  B  B* ·  ·  ·  ·  ·     break — 1 min per pad
 ```
 
-Rows 6 to 3 are four independent timers, drawn above in the four states one can
+Rows 2 to 5 are four independent timers, drawn above in the four states one can
 be in. A row fills left to right with the current pad blinking, and when it runs
 out the whole row goes red with a green pad on the end. Either answer puts it
 back to idle, and the left pad starts it again.
@@ -70,13 +71,13 @@ so you can tell what happened without looking:
 ## Habits
 
 ```
- 7   B  B  B  B  ·  ·  ·  ·     day bar — the weekly tab shows a week bar
- 6   c  c  c  c  c  ·  ·  ·     one pad per habit, in its own colour
- 5   R* c  G  c  ·  ·  ·  ·     blinking red = in progress, green = done
+ 1   B  B  B  B  ·  ·  ·  ·     day bar — the weekly tab shows a week bar
+ 2   c  c  c  c  c  ·  ·  ·     one pad per habit, in its own colour
+ 3   R* c  G  c  ·  ·  ·  ·     blinking red = in progress, green = done
  4   c  c  c  ·  ·  ·  ·  ·
- 3   c  c  c  c  ·  ·  ·  ·
- 2   c  c  ·  ·  ·  ·  ·  ·
- 1   ·  ·  ·  ·  ·  ·  ·  ·     a pad with no name is off and does nothing
+ 5   c  c  c  c  ·  ·  ·  ·
+ 6   c  c  ·  ·  ·  ·  ·  ·
+ 7   ·  ·  ·  ·  ·  ·  ·  ·     a pad with no name is off and does nothing
 ```
 
 Two independent grids, daily and weekly, one per tab.
@@ -94,13 +95,13 @@ unstarted.
 ## Machine and audio
 
 ```
- 7   B  B  B  ·  ·  ·  ·  ·     day bar
- 6   G  G  G  G  G  G  ·  ·     disks — one pad per drive
- 5   Y  G  G  G  ·  ·  ·  ·     filesystems — / · home · Data-1 · Fast-1
+ 1   B  B  B  ·  ·  ·  ·  ·     day bar
+ 2   G  G  G  G  G  G  ·  ·     disks — one pad per drive
+ 3   Y  G  G  G  ·  ·  ·  ·     filesystems — / · home · Data-1 · Fast-1
  4   ·  ·  ·  ·  ·  ·  ·  ·
- 3   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
- 2   ·  ·  ·  ·  ·  ·  ·  ·
- 1   B  W  ·  G  ·  W  S  W     speakers · headset · | effects | prev play next
+ 5   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
+ 6   ·  ·  ·  ·  ·  ·  ·  ·
+ 7   B  W  ·  G  ·  W  S  W     speakers · headset | effects | prev play next
 ```
 
 Everything above the bottom row is read-only:
@@ -137,13 +138,13 @@ from anywhere else.
 ## Spectrum
 
 ```
- 7   ·  ·  ·  ·  W  ·  ·  ·     white peaks hang above the bars and fall back
- 6   ·  ·  Y  ·  C  ·  ·  W
- 5   R  ·  Y  ·  C  ·  ·  ·
+ 1   ·  ·  ·  ·  W  ·  ·  ·     white peaks hang above the bars and fall back
+ 2   ·  ·  Y  ·  C  ·  ·  W
+ 3   R  ·  Y  ·  C  ·  ·  ·
  4   R  O  Y  G  C  ·  B  M
- 3   R  O  Y  G  C  S  B  M
- 2   R  O  Y  G  C  S  B  M
- 1   R  O  Y  G  C  S  B  M
+ 5   R  O  Y  G  C  S  B  M
+ 6   R  O  Y  G  C  S  B  M
+ 7   R  O  Y  G  C  S  B  M
      bass ────────────────► treble
 ```
 
@@ -165,13 +166,13 @@ is simply dark.
 ## CPU
 
 ```
- 7   ·  ·  ·  R  ·  ·  ·  ·     one column per group of threads, six tall
- 6   ·  ·  ·  Y  ·  ·  ·  ·
- 5   ·  G  ·  G  ·  ·  ·  ·
+ 1   ·  ·  ·  R  ·  ·  ·  ·     one column per group of threads, six tall
+ 2   ·  ·  ·  Y  ·  ·  ·  ·
+ 3   ·  G  ·  G  ·  ·  ·  ·
  4   ·  G  ·  G  ·  G  ·  ·
- 3   G  G  ·  G  ·  G  ·  G
- 2   G  G  G  G  G  G  G  G
- 1   G  G  G  B  B  Y  Y  ·     memory — used · buffers · cache
+ 5   G  G  ·  G  ·  G  ·  G
+ 6   G  G  G  G  G  G  G  G
+ 7   G  G  G  B  B  Y  Y  ·     memory — used · buffers · cache
 ```
 
 Each column is the busiest of its four threads rather than their average, so a
@@ -181,13 +182,13 @@ bottom uses htop's colours.
 ## Network
 
 ```
- 7   ·  ·  ·  ·   ·  ·  ·  ·    download on the left, upload on the right
- 6   ·  ·  ·  ·   ·  ·  ·  ·
- 5   C  C  ·  ·   ·  ·  ·  ·
+ 1   ·  ·  ·  ·   ·  ·  ·  ·    download on the left, upload on the right
+ 2   ·  ·  ·  ·   ·  ·  ·  ·
+ 3   C  C  ·  ·   ·  ·  ·  ·
  4   C  C  C  C   O  ·  ·  ·
- 3   C  C  C  C   O  O  ·  ·
- 2   C  C  C  C   O  O  O  O
- 1   C  C  C  C   O  O  O  O
+ 5   C  C  C  C   O  O  ·  ·
+ 6   C  C  C  C   O  O  O  O
+ 7   C  C  C  C   O  O  O  O
 ```
 
 Two half-width bars filling from the bottom. Each row is four pads, so a
@@ -197,8 +198,8 @@ at zero all day.
 
 ## Bars
 
-The top row of the pomodoro tab, both habit tabs and the machine tab is not part
-of that tab: it shows how much of a period has begun. The pomodoro, machine and
+Row 1 of the pomodoro tab, both habit tabs and the machine tab is not part of
+that tab: it shows how much of a period has begun. The pomodoro, machine and
 daily tabs share the same day — eight three-hour slices from midnight, deep blue
 — and the weekly tab shows its week, one slice per day from Sunday, deep purple.
 
