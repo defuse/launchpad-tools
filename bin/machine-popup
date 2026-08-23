@@ -29,6 +29,7 @@ COLS = 8
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 YELLOW_B = '#ffd21a'                       # the held cell, as in habit-popup
 TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps'}
+CELL_H = 240                               # a row's height; the grid centres
 
 
 def g9_centre_box():
@@ -53,10 +54,11 @@ def g9_centre_box():
         n = [int(v) for v in re.findall(r'\d+', wa.split('=')[1])]
         top, bot = max(gy, n[1]), min(gy + gh, n[1] + n[3])
         w = min(3840, gw)
-        # four rows rather than the habit window's six, so two thirds the height
-        return w, int((bot - top) * 0.62), gx + (gw - w) // 2, top
+        # the whole work area, like the habit window: the grid is four rows
+        # rather than six, and floats in the middle of it
+        return w, bot - top, gx + (gw - w) // 2, top
     except Exception:
-        return 1600, 700, 100, 100
+        return 1600, 900, 100, 100
 
 
 class Grid:
@@ -72,29 +74,41 @@ class Grid:
         self.root.geometry(f'{w}x{h}+{x}+{y}')
         self.root.protocol('WM_DELETE_WINDOW', self.hide)
 
+        # fill='x' with expand: the grid takes its own height from the rows
+        # below and pack centres it in whatever is left, so four rows sit in
+        # the middle of a full-height window rather than being stretched to it
         outer = tk.Frame(self.root, bg=BG)
-        outer.pack(fill='both', expand=True, padx=22, pady=14)
-        self.frames, self.names, self.values, self.titles = {}, {}, {}, {}
+        outer.pack(fill='x', expand=True, padx=22)
+        self.frames, self.names, self.values = {}, {}, {}
+        self.details, self.titles = {}, {}
         for i, r in enumerate(ROWS):
-            outer.grid_rowconfigure(i, weight=1)
+            outer.grid_rowconfigure(i, weight=0, minsize=CELL_H)
             for c in range(COLS):
                 outer.grid_columnconfigure(c, weight=1)
                 f = tk.Frame(outer, bg=CELL_BG, highlightthickness=5,
-                             highlightbackground=BG)
+                             highlightbackground=BG, height=CELL_H)
                 f.grid(row=i, column=c, sticky='nsew', padx=4, pady=4)
                 f.grid_propagate(False)
                 self.frames[(r, c)] = f
-                # the row's own name, once, in the leftmost cell that has one
-                t = tk.Label(f, text='', font=('DejaVu Sans', 13), fg=MUTED, bg=CELL_BG)
-                t.pack(anchor='nw', padx=10, pady=(6, 0))
-                self.titles[(r, c)] = t
-                v = tk.Label(f, text='', font=('DejaVu Sans', 34, 'bold'),
-                             fg=MUTED, bg=CELL_BG)
-                v.pack(expand=True)
-                self.values[(r, c)] = v
-                n = tk.Label(f, text='', font=('DejaVu Sans', 16), fg=MUTED, bg=CELL_BG)
-                n.pack(anchor='sw', padx=10, pady=(0, 6))
+                # what it is, top left: the drive, or the filesystem's path
+                n = tk.Label(f, text='', font=('DejaVu Sans', 15), fg=MUTED,
+                             bg=CELL_BG, anchor='w', justify='left')
+                n.pack(anchor='nw', padx=10, pady=(6, 0), fill='x')
                 self.names[(r, c)] = n
+                # the reading itself, and under it the part that qualifies it
+                mid = tk.Frame(f, bg=CELL_BG)
+                mid.pack(expand=True)
+                v = tk.Label(mid, text='', font=('DejaVu Sans', 34, 'bold'),
+                             fg=MUTED, bg=CELL_BG)
+                v.pack()
+                self.values[(r, c)] = v
+                d = tk.Label(mid, text='', font=('DejaVu Sans', 17), fg=MUTED, bg=CELL_BG)
+                d.pack()
+                self.details[(r, c)] = d
+                # the row's own name lives in the empty cell to the left of it
+                t = tk.Label(f, text='', font=('DejaVu Sans', 14), fg=MUTED, bg=CELL_BG)
+                t.pack(anchor='sw', padx=10, pady=(0, 6))
+                self.titles[(r, c)] = t
         self.root.bind_all('<Escape>', lambda ev: (self.hide(), 'break')[1])
         self.root.withdraw()
 
@@ -121,21 +135,23 @@ class Grid:
     # ---- painting --------------------------------------------------------
     def paint(self):
         for r in ROWS:
-            titled = False
+            # the row's name goes in the empty cell to the left of its readings
+            # -- the rows are centred, so there is one, and a cell that holds a
+            # reading has its own name to carry
+            used = [c for c in range(COLS) if (r, c) in self.cells]
+            label_at = next((c for c in range(COLS) if c not in used), None)
             for c in range(COLS):
                 cell = self.cells.get((r, c))
-                frame = self.frames[(r, c)]
                 colour = (cell or {}).get('colour') or MUTED
                 self.values[(r, c)].configure(text=(cell or {}).get('value', ''),
                                               fg=colour)
+                self.details[(r, c)].configure(text=(cell or {}).get('detail', ''))
                 self.names[(r, c)].configure(text=(cell or {}).get('name', ''))
-                # the row's label sits on its first occupied cell, so the grid
-                # reads as four named rows without a column of headers
                 self.titles[(r, c)].configure(
-                    text='' if titled or not cell else TITLES.get(r, ''))
-                titled = titled or bool(cell)
+                    text=TITLES.get(r, '') if c == label_at else '')
                 edge = YELLOW_B if self.focus_rc == (r, c) else BG
-                frame.configure(highlightbackground=edge, highlightcolor=edge)
+                self.frames[(r, c)].configure(highlightbackground=edge,
+                                              highlightcolor=edge)
 
     # ---- protocol --------------------------------------------------------
     def handle(self, line):

@@ -97,9 +97,11 @@ def test_a_filesystem_gives_both_the_size_and_the_share(mach, mod):
     c = cells(mod)
     first = mod.centred(2)
     assert c[(mod.FS_ROW, first)]['value'] == '37 GB'
-    assert c[(mod.FS_ROW, first)]['name'] == 'root  8% free'
+    assert c[(mod.FS_ROW, first)]['detail'] == '8% free'
+    assert c[(mod.FS_ROW, first)]['name'] == mod.MOUNTS[0].path, 'the path, not a nickname'
     assert c[(mod.FS_ROW, first + 1)]['value'] == '1.2 TB'
-    assert c[(mod.FS_ROW, first + 1)]['name'] == 'home  63% free'
+    assert c[(mod.FS_ROW, first + 1)]['detail'] == '63% free'
+    assert c[(mod.FS_ROW, first + 1)]['name'].endswith('firexware')
 
 
 def test_the_colours_match_the_pads(mach, mod):

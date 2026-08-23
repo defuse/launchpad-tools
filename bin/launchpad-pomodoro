@@ -1423,9 +1423,9 @@ class Board:
         """
         cells = []
 
-        def add(row, col, name, value, colour):
+        def add(row, col, name, value, colour, detail=''):
             cells.append({'r': row, 'c': col, 'name': name, 'value': value,
-                          'colour': HEX.get(colour, '#5a5a66')})
+                          'detail': detail, 'colour': HEX.get(colour, '#5a5a66')})
 
         first = centred(len(snap.disks))
         temps = {n: (t, spins) for n, t, spins in snap.drives}
@@ -1443,13 +1443,14 @@ class Board:
         for i, (mount, free, pct) in enumerate(snap.mounts):
             colour = (RED if free is None else RED if free < FS_CRIT
                       else YELLOW if free < FS_LOW else GREEN)
-            # both numbers: 37GB is roomy on a root partition and nothing on a
-            # 12TB array, and a percentage alone hides how much is actually
-            # left to work with
-            add(FS_ROW, first + i, mount.name if free is None
-                else f'{mount.name}  {pct:.0f}% free',
+            # the path rather than the nickname, since that is the thing you
+            # would type; and both numbers, because 37GB is roomy on a root
+            # partition and nothing on a 12TB array while a percentage alone
+            # hides how much there is to work with
+            add(FS_ROW, first + i, mount.path,
                 '--' if free is None else (f'{free/1000:.1f} TB' if free >= 1000
-                                           else f'{free:.0f} GB'), colour)
+                                           else f'{free:.0f} GB'), colour,
+                '' if pct is None else f'{pct:.0f}% free')
 
         first = centred(len(snap.temps))
         for i, (sensor, t) in enumerate(snap.temps):
