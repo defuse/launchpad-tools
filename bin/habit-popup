@@ -41,6 +41,9 @@ NAME_OF = {i: n for i, n, _ in PALETTE}
 # that the pads would never show
 ROWS, COLS, HAB_ROW0 = 8, 8, 2
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
+# What an empty cell is named when it is turned on by picking a colour for it.
+# It has to be a real name: the board drops any cell whose name is blank.
+PLACEHOLDER = 'SET NAME HERE'
 YELLOW_B, RED_B = '#ffd21a', '#ff4444'
 # cell background carries the habit state; deliberately dim so the bright
 # name text stays legible on top of it
@@ -72,6 +75,7 @@ class Grid:
         self._painting = False
         self.mode, self.focus_rc = None, None
         self.drag_from = None
+        self._fits = []                  # pending fit() callbacks
         self.ghost = None
         self.root = tk.Tk(); self.root.title('habits'); self.root.configure(bg=BG)
         self.root.attributes('-topmost', True)
@@ -209,9 +213,18 @@ class Grid:
         return 'break'
 
     def set_colour(self,r,c,idx):
+        """Pick a colour, and turn the cell on if it was not on already.
+
+        A colour by itself does not exist as far as the board is concerned: a
+        cell with no name is a cell with no habit, and set_habit drops it. So
+        colouring an empty cell used to look like it worked and then vanish on
+        the next repaint. Naming it is what makes the colour stick, and the
+        placeholder says what to do about the name.
+        """
         if self.mode!='edit': return
         h = dict(self.get(r,c)); h['colour']=idx
-        if not h.get('name'): h['name'] = self.vars[(r,c)].get().strip()
+        if not h.get('name'):
+            h['name'] = self.vars[(r,c)].get().strip() or PLACEHOLDER
         self.put(r,c,h); self.emit(r,c); self.paint()
 
     # ---- drag to swap ----
@@ -323,6 +336,9 @@ class Grid:
         self.finish()
 
     def finish(self):
+        while self._fits:
+            try: self.root.after_cancel(self._fits.pop())
+            except Exception: pass
         self.kill_ghost()
         if self.mode=='edit':
             sys.stdout.write('closed\n'); sys.stdout.flush()
@@ -365,8 +381,9 @@ class Grid:
             # xfwm only publishes _NET_FRAME_EXTENTS once it has drawn the
             # frame, so the first pass usually measures a 0 border and lands a
             # few pixels long; fit() only ever shrinks, so retrying converges.
+            # Ids kept so a window that goes away first can cancel them.
             for ms in (120, 600):
-                self.root.after(ms, self.fit)
+                self._fits.append(self.root.after(ms, self.fit))
             self.root.attributes('-topmost', True)
             if cmd=='edit':
                 self.root.focus_force()

@@ -239,6 +239,52 @@ def test_set_colour_only_applies_while_editing(grid, say):
     assert grid.habits['2,0']['colour'] == 45
 
 
+def capture(grid, fn):
+    """Run fn() and return what the window wrote back to the board."""
+    buf, real = io.StringIO(), sys.stdout
+    sys.stdout = buf
+    try:
+        fn()
+        grid.root.update()
+    finally:
+        sys.stdout = real
+    return Emitted(buf.getvalue().splitlines())
+
+
+def test_colouring_an_empty_cell_turns_the_habit_on(grid, say, popup):
+    """A colour on its own does not exist as far as the board is concerned: a
+    cell with no name is a cell with no habit, and set_habit drops it. Picking
+    a colour therefore has to name the habit as well, or the pick is silently
+    thrown away."""
+    say('load\t' + json.dumps(HABITS), 'edit\t4\t4')
+    out = capture(grid, lambda: grid.set_colour(4, 4, 45))
+
+    assert grid.habits['4,4'] == {'name': popup.PLACEHOLDER, 'colour': 45, 'state': 0}
+    assert out.lines('set') == [f'set\t4\t4\t{popup.PLACEHOLDER}\t45']
+
+
+def test_the_placeholder_name_shows_in_the_cell_to_be_typed_over(grid, say, popup):
+    say('load\t' + json.dumps(HABITS), 'edit\t4\t4')
+    capture(grid, lambda: grid.set_colour(4, 4, 45))
+    assert grid.vars[(4, 4)].get() == popup.PLACEHOLDER
+
+
+def test_colouring_a_cell_being_typed_into_keeps_what_was_typed(grid, say, popup):
+    """The placeholder is for cells with nothing in them at all -- a half typed
+    name must survive picking a colour for it."""
+    say('load\t' + json.dumps(HABITS), 'edit\t4\t4')
+    grid.vars[(4, 4)].set('half typed')
+    capture(grid, lambda: grid.set_colour(4, 4, 45))
+    assert grid.habits['4,4']['name'] == 'half typed'
+
+
+def test_the_placeholder_is_a_real_name_the_board_will_keep(grid, say, popup):
+    """Not a blank-looking string: whitespace would be stripped back to empty
+    and dropped again by the board."""
+    assert popup.PLACEHOLDER.strip() == popup.PLACEHOLDER
+    assert popup.PLACEHOLDER
+
+
 def test_painting_flag_is_released_even_if_paint_throws(grid, say, monkeypatch):
     """Stuck on, it made typing a habit name silently do nothing."""
     say('load\t' + json.dumps(HABITS), 'edit\t2\t0')

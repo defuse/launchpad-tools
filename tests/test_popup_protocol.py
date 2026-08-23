@@ -80,6 +80,16 @@ def test_set_line_with_an_empty_name_deletes(hb):
     assert '2,0' not in hb.habits
 
 
+def test_a_placeholder_name_makes_the_habit_real(hb, mod):
+    """The window's other half of the empty-cell colour fix: the board has to
+    accept the name it invents, and light the pad in the colour that came with
+    it."""
+    feed(hb, ['set\t4\t4\tSET NAME HERE\t45'])
+    assert hb.habit(4, 4) == {'name': 'SET NAME HERE', 'colour': 45, 'state': 0}
+    hb.render()
+    assert hb.out.lit()[mod.pad(4, 4)] == 45
+
+
 def test_closed_line_ends_the_edit_session(hb, mod, clock):
     hb.press(mod.pad(2, 0)); clock.advance(0.1); hb.release(mod.pad(2, 0))
     assert hb._editing == (2, 0)

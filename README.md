@@ -60,7 +60,9 @@ A pad with no name is off and does nothing.
 
 **Hold** a pad to cycle its state, once per second held. **Press** it to open a
 window on screen showing the whole grid, where you can rename habits, pick
-colours, drag them around to rearrange, and double-click to cycle. Everything
+colours, drag them around to rearrange, and double-click to cycle. Picking a
+colour for an empty cell creates the habit, named `SET NAME HERE` so you can
+type over it — a colour with no name is not a habit and would be dropped. Everything
 applies immediately; Esc closes the window, and a quick tap of the reset pad
 does too. Holding reset for two seconds clears the current tab back to
 unstarted.
@@ -132,7 +134,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 248 tests, about six seconds
+tests/run-tests             # 260 tests, about seven seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
