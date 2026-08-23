@@ -164,3 +164,37 @@ def test_unstarted_and_complete_habits_do_not_flash(board, mod, clock):
         board.shown.clear(); board.render()
         assert board.shown[mod.pad(2, 0)][1] == mod.CYAN
         assert board.shown[mod.pad(2, 1)][1] == mod.GREEN
+
+
+# ---- selection happens on the way down -------------------------------------
+
+def test_pressing_a_habit_selects_it_before_release(hb, mod):
+    """Holding a pad cycles it immediately, so selection must not wait for the
+    release -- otherwise you watch one cell change while another stays lit."""
+    hb.press(mod.pad(3, 2))
+    assert hb._editing == (3, 2)
+    assert any(c.startswith('edit\t3\t2') for c in cmds(hb, 'edit')), sent(hb)
+
+
+def test_moving_the_selection_happens_on_press(hb, mod):
+    hb.press(mod.pad(3, 2)); hb.release(mod.pad(3, 2))
+    hb.press(mod.pad(5, 1))
+    assert hb._editing == (5, 1)
+    assert any(c.startswith('focus\t5\t1') for c in cmds(hb, 'focus')), sent(hb)
+
+
+def test_holding_an_unselected_habit_selects_and_cycles_it(hb, mod, clock):
+    hb.press(mod.pad(2, 0))
+    assert hb._editing == (2, 0), 'selected on the way down'
+    clock.advance(mod.HOLD_CYCLE + 0.05); hb.tick()
+    assert hb.habit(2, 0)['state'] == 1
+    hb.release(mod.pad(2, 0))
+    assert hb._editing == (2, 0), 'still selected after release'
+
+
+def test_releasing_a_habit_pad_changes_nothing_further(hb, mod):
+    hb.press(mod.pad(2, 0))
+    before = len(sent(hb))
+    hb.release(mod.pad(2, 0))
+    assert len(sent(hb)) == before, 'release is not a gesture of its own'
+    assert hb._editing == (2, 0)

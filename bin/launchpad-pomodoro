@@ -600,7 +600,7 @@ class Board:
 
     def release(self, note):
         got = self.held.pop(note, None)
-        cycles = self._hold_count.pop(note, 0)   # always drop it; it leaked when
+        self._hold_count.pop(note, None)         # always drop it; it leaked when
                                                  # a pad was let go on another tab
 
         if note == pad(FUNC_ROW, RESET_COL) and got is not None:
@@ -613,23 +613,8 @@ class Board:
                 self._editing = None
             return
 
-        if got is None or self.mode not in HAB_MODES:
-            return
-        if got[1] != self.mode:
-            return          # pressed on a different tab: not a gesture for this one
-        if cycles:
-            return                              # that was a hold, not a click
-        got = self.rc(note)
-        if not got or got[0] not in HAB_ROWS:
-            return
-        r, c = got
-        if self._editing == (r, c):
-            return                              # already selected; Esc closes
-        elif self._editing:
-            self._editing = (r, c)              # different cell -> move selection
-            self._popup_cmd(f'focus\t{r}\t{c}')
-        else:
-            self.edit_habit(r, c)               # open with this one selected
+        # Habit selection happens on press, so there is nothing left to do here.
+        # Releasing only ends the hold, which tick() has already been acting on.
 
     def press(self, note):
         # Tagged with the tab that was showing when the pad went down, so a pad
@@ -655,7 +640,11 @@ class Board:
                         self._popup_cmd('hide')   # left the habit tabs
                         self._editing = None
         elif self.mode in HAB_MODES and lr in HAB_ROWS:
-            pass                       # decided on release, or by the hold timer
+            # Select on the way DOWN, not on release: holding a pad that isn't
+            # the selected one cycles it immediately, so waiting for release
+            # meant watching a cell change while a different one stayed lit.
+            # A hold is then just a select that also cycles.
+            self.select_habit(lr, lc)
         elif self.mode == M_POMO and lr in TIMER_ROWS: self.pomo_press(lr, lc)
         elif self.mode == M_POMO and lr in TOGGLE_ROWS:
             self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
@@ -731,6 +720,16 @@ class Board:
                 else:
                     col = self.HAB_STATE_COLOUR.get(h.get('state', 0), own)
                 self.set(pad(r, c), col)
+
+    def select_habit(self, r, c):
+        """Make (r,c) the selected cell, opening the window if it is closed."""
+        if self._editing == (r, c):
+            return                              # already selected; Esc closes
+        if self._editing:
+            self._editing = (r, c)
+            self._popup_cmd(f'focus\t{r}\t{c}')
+        else:
+            self.edit_habit(r, c)
 
     def edit_habit(self, r, c):
         """Open the window with this cell selected. Esc is the only way out."""
