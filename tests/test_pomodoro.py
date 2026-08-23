@@ -260,7 +260,7 @@ def test_reset_pad_tap_toggles_this_tab_window(board, mod, clock):
     """One pad, two jobs: a tap is the window, a two second hold is the reset."""
     board.mode = mod.M_HAB
     tap(board, mod, clock)
-    assert board._window == mod.M_HAB and board._editing is not None
+    assert board._window == mod.M_HAB
     tap(board, mod, clock)
     assert board._window is None and board._editing is None
 
@@ -270,6 +270,50 @@ def test_reset_pad_tap_opens_the_machine_window(board, mod, clock):
     board.machine.snap = mod.Snapshot(disks=(('sda', 'ok'),))
     tap(board, mod, clock)
     assert board._window == mod.M_MACH
+
+
+# ---- opened from the red pad, nothing is selected -------------------------
+
+def test_the_machine_window_opens_with_no_cell_marked(board, mod, clock):
+    """A peek marks the pad being held. This is not a peek, and an outline
+    around a cell nobody pointed at is a lie about what is being asked."""
+    board.mode = mod.M_MACH
+    board.machine.snap = mod.Snapshot(disks=(('sda', 'ok'),))
+    tap(board, mod, clock)
+    assert board._machine_popup.sent()[-1] == 'show'
+
+
+def test_the_habit_window_opens_with_no_cell_selected(board, mod, clock):
+    """It used to fall back to the top-left cell, which put a red editing box
+    around a habit the moment the window opened."""
+    board.mode = mod.M_HAB
+    board.habit_sets['1'] = {'2,0': {'name': 'a', 'colour': 3, 'state': 0}}
+    tap(board, mod, clock)
+    assert board._popup.sent()[-1] == 'edit', 'no cell named'
+    assert board._editing is None
+
+
+def test_a_cell_already_chosen_by_a_pad_keeps_the_selection(board, mod, clock):
+    """The window can already be up from a held pad, with that pad's cell
+    selected. The red pad then has something to point at, and points at it."""
+    board.mode = mod.M_HAB
+    board.habit_sets['1'] = {'3,2': {'name': 'a', 'colour': 3, 'state': 0}}
+    board.select_habit(3, 2)                     # open from a pad, not the red one
+    assert board._window is None
+    tap(board, mod, clock)
+    assert board._popup.sent()[-1] == 'edit\t3\t2'
+    assert board._editing == (3, 2)
+
+
+def test_a_pad_pressed_while_it_is_open_just_moves_the_selection(board, mod, clock):
+    """Not a second opening: the window is already up, from the red pad, with
+    nothing selected."""
+    board.mode = mod.M_HAB
+    board.habit_sets['1'] = {'3,2': {'name': 'a', 'colour': 3, 'state': 0}}
+    tap(board, mod, clock)
+    board.select_habit(3, 2)
+    assert board._popup.sent()[-1] == 'focus\t3\t2'
+    assert board._editing == (3, 2)
 
 
 def test_reset_pad_tap_opens_the_pomodoro_window(board, mod, clock):
@@ -422,18 +466,19 @@ def test_the_four_kinds_of_todo_cell(board, mod, name, state, colour):
     assert board.shown[mod.pad(mod.TODO_ROW, 3)][1] == getattr(mod, colour)
 
 
-def test_done_is_a_brighter_green_than_a_claimed_pomodoro(mod):
+def test_done_is_a_different_green_from_a_claimed_pomodoro(mod):
     """The two rows are adjacent; the same green in both reads as one block."""
     assert mod.TODO_DONE != mod.GREEN
     assert isinstance(mod.TODO_DONE, tuple), 'no palette green is quite this one'
 
 
-def test_done_is_green_rather_than_near_white(mod):
-    """(80, 127, 90) was so close to grey that the pad read as white, which is
-    exactly what an unstarted named slot looks like -- one state away."""
+def test_done_is_a_deep_green_and_nothing_else(mod):
+    """(80, 127, 90) came out near grey and the pad read as white -- which is
+    what an unstarted named slot looks like, one state away. (35, 127, 70) had
+    enough blue left to look like mint."""
     r, g, b = mod.TODO_DONE
-    assert g == 127, 'green at full'
-    assert max(r, b) < g * 0.6, 'and the other two well down, or it washes out'
+    assert g > 60, 'green enough to read as green'
+    assert max(r, b) < g * 0.15, 'and next to nothing else in it'
 
 
 def test_clearing_empties_every_slot(board, mod):
@@ -694,35 +739,88 @@ def sent_rows(board):
     return json.loads(sent[-1].split('\t', 1)[1])['rows']
 
 
-def test_the_bar_is_the_first_row_of_the_window(mirror, mod):
-    """Where it is on the board: above the timers."""
-    rows = sent_rows(mirror)
-    assert rows[0]['row'] == mod.BAR_ROW
-    assert rows[0]['name'] == 'time of day'
+def sent_row(board, r):
+    return next(row for row in sent_rows(board) if row['row'] == r)
+
+
+def test_the_rows_are_in_the_order_they_are_on_the_board(mirror, mod):
+    """Reset at the top right, then the bar, then the timers."""
+    assert [r['row'] for r in sent_rows(mirror)] == \
+        [mod.FUNC_ROW, mod.BAR_ROW] + list(mod.TIMER_ROWS)
+
+
+def test_the_bar_is_named_for_what_it_shows(mirror, mod):
+    assert sent_row(mirror, mod.BAR_ROW)['name'] == 'time of day'
 
 
 def test_the_bar_cells_are_the_ones_on_the_pads(mirror, mod):
     mirror.render()
-    cells = sent_rows(mirror)[0]['cells']
+    cells = sent_row(mirror, mod.BAR_ROW)['cells']
     lit = mirror.out.lit()
     assert cells == [mod.PAD_HEX[lit[mod.pad(mod.BAR_ROW, c)]] for c in range(mod.CELLS)]
 
 
 def test_the_bar_row_says_what_each_pad_stands_for(mirror, mod):
-    assert sent_rows(mirror)[0]['labels'] == mod.DAY.labels()
+    assert sent_row(mirror, mod.BAR_ROW)['labels'] == mod.DAY.labels()
 
 
 def test_only_the_bar_carries_labels(mirror, mod):
     """A timer's pads are three minutes each and say so in the row's name;
     labelling all thirty-two of them would be noise."""
-    assert all('labels' not in r for r in sent_rows(mirror)[1:])
+    assert [r['row'] for r in sent_rows(mirror) if 'labels' in r] == [mod.BAR_ROW]
 
 
 def test_the_bar_row_has_no_hint_state(mirror, mod):
     """The hints are things you can do. There is nothing to do about the time
     of day, so its state matches none of them."""
     from lpharness import load_popup
-    assert sent_rows(mirror)[0]['state'] not in load_popup('pomo-popup').HINTS
+    assert sent_row(mirror, mod.BAR_ROW)['state'] not in load_popup('pomo-popup').HINTS
+
+
+# ---- the reset pad is in the window too -----------------------------------
+
+def test_the_reset_pad_is_the_top_right_cell(mirror, mod):
+    mirror.render()
+    row = sent_row(mirror, mod.FUNC_ROW)
+    assert row['name'] == 'reset'
+    assert row['cells'][mod.RESET_COL] == mod.PAD_HEX[mod.RED]
+
+
+def test_the_rest_of_that_row_is_not_in_the_window(mirror, mod):
+    """It is the tab strip, and this window is not the tab strip. A null is no
+    pad at all, as against a pad that is merely unlit."""
+    cells = sent_row(mirror, mod.FUNC_ROW)['cells']
+    assert cells[:mod.RESET_COL] == [None] * mod.RESET_COL
+
+
+def test_only_the_reset_pad_of_that_row_is_a_button(mirror, mod):
+    """A click landing on one of the others would switch tabs."""
+    assert sent_row(mirror, mod.FUNC_ROW)['live'] == [mod.RESET_COL]
+    assert all('live' not in r for r in sent_rows(mirror)
+               if r['row'] != mod.FUNC_ROW), 'every cell of a timer row is one'
+
+
+def test_the_hold_fill_sweeps_across_the_window_too(mirror, mod, clock):
+    """The pads either side of the reset one are dark until the hold fills
+    them, and then they are part of it -- so the two second sweep shows here
+    without being drawn a second time."""
+    mirror.press(mod.pad(mod.FUNC_ROW, mod.RESET_COL))
+    clock.advance(mod.RESET_HOLD * 0.75)
+    mirror.render()
+    cells = sent_row(mirror, mod.FUNC_ROW)['cells']
+    assert cells.count(mod.PAD_HEX[mod.RED]) > 1, 'the fill is on its way'
+    assert cells[0] is None, 'and has not reached the far end'
+    assert cells[mod.RESET_COL] == mod.PAD_HEX[mod.RED]
+
+
+def test_the_window_can_work_the_reset_pad(mirror, mod, clock):
+    """The same entry points as the pad, so a two second hold in the window
+    resets the tab exactly as it does on the board."""
+    mirror.rows[ROW] = {'state': mod.CLAIMED, 'started': clock.time()}
+    mirror.press(mod.pad(mod.FUNC_ROW, mod.RESET_COL))
+    clock.advance(mod.RESET_HOLD + 0.1)
+    mirror.release(mod.pad(mod.FUNC_ROW, mod.RESET_COL))
+    assert mirror.rows[ROW]['state'] == mod.IDLE
 
 
 def test_a_click_on_a_bar_cell_does_nothing(mirror, mod, clock):

@@ -33,7 +33,7 @@ python3 -c 'import mido' 2>/dev/null || {
     exit 1
 }
 python3 -c 'import tkinter' 2>/dev/null || \
-    echo "warning: no tkinter -- the habit window will not open (Debian: python3-tk)" >&2
+    echo "warning: no tkinter -- no window will open (Debian: python3-tk)" >&2
 
 mkdir -p "$BIN" "$SHARE" "$(dirname "$UNIT")"
 

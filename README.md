@@ -23,10 +23,12 @@ Copyright © 2026 Taylor Hornby. Dual licensed under [MIT](LICENSE-MIT) or
     └──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┘
 ```
 
-The selected tab is sky blue and the rest are white. Reset on the right is
-hold-only: two seconds clears what the current tab owns, and the row fills red
-as it goes so you can see it coming. A quick tap instead closes the habit
-window.
+The selected tab is sky blue and the rest are white. The red pad on the right
+does two jobs, told apart by how long it is down: a tap opens or closes the
+current tab's window — the habit grids, the machine readout and the pomodoro
+mirror have one, the meters and the spectrum do not — and a two-second hold
+clears what that tab owns. The row fills red leftward as the hold goes on, so
+the reset is visible coming.
 
 The diagrams below show one tab each, counting down from the row under the tabs
 to the bottom of the board — the same numbering the code uses. In them:
@@ -69,10 +71,6 @@ red then green as you start and finish it — a state on an unnamed slot is
 allowed and shows. Pressing a pad cycles its state; the names are typed in the
 window.
 
-**Tap the red pad** to open the window for whichever tab you are on — the habit
-grid, the machine readout, or the pomodoro mirror — and tap it again to close
-it. Holding it for two seconds still resets the tab.
-
 Chimes are synthesised (see `share/make-sounds`) and distinguishable by count,
 so you can tell what happened without looking:
 
@@ -101,13 +99,19 @@ blinking cell of a running timer blinks here in step with the board, and the red
 fill of a hold-to-abandon crawls across both at once. Each row is labelled with
 its length.
 
-The day bar is at the top, as `time of day`, with each pad printed with the
-three hours it stands for — `00–03` through `21–00`. It is read-only here as it
-is on the board; it is in the window so the row on the board can be read
-without being explained. The hours come from the same slices and step the bar is
-drawn from, so there is no second description of the row to keep in step, and
-the ink is picked against whatever colour the pad is showing so it stays legible
-through the last hour's yellow, orange and red.
+The red reset pad is in the top right corner, where it is on the board, and
+works the same: click to close the window, hold two seconds to reset the tab.
+The rest of that row is the tab strip, which this window is not, so those cells
+are not drawn and cannot be clicked — except while the reset is being held,
+when the fill sweeps across them exactly as it does on the board.
+
+Below it the day bar, as `time of day`, each pad printed with the three hours it
+stands for — `00–03` through `21–00`. Read-only here as it is on the board; it
+is in the window so the row can be read without being explained. The hours come
+from the same slices and step the bar is drawn from, so there is no second
+description of the row to keep in step, and the ink is picked against whatever
+colour the pad is showing so it stays legible through the last hour's yellow,
+orange and red.
 
 **Switching tabs switches the window.** Whatever was on screen closes and the
 new tab's window opens in its place — or nothing does, on a tab that has none.
@@ -144,10 +148,12 @@ after your drag and undoes it on screen.
 Two independent grids, daily and weekly, one per tab.
 
 **Hold** a pad to cycle it, once per second held. **Press** it to open a window
-on screen showing the whole grid, where you can rename habits, pick colours,
-drag them around to rearrange, and double-click to cycle. Picking a colour for
-an empty cell creates the habit, named `SET NAME HERE` so you can type over it —
-a colour with no name is not a habit and would be dropped.
+on screen showing the whole grid, with that habit selected, where you can rename
+habits, pick colours, drag them around to rearrange, and double-click to cycle.
+Picking a colour for an empty cell creates the habit, named `SET NAME HERE` so
+you can type over it — a colour with no name is not a habit and would be
+dropped. Opened from the red pad instead, nothing is selected: no pad was
+pointing at anything.
 
 Everything applies immediately; Esc closes the window, and a quick tap of the
 reset pad does too. Holding reset for two seconds clears the current tab back to
@@ -178,7 +184,8 @@ Everything above the bottom row is read-only:
 it, laid out as the same grid: the same rows in the same columns, with the held
 cell outlined. It carries what a colour cannot — which drive, how many degrees,
 how many gigabytes and what share of the volume that is. Releasing the pad
-closes it; tapping the red pad opens the same window and leaves it open.
+closes it. Tapping the red pad opens the same window and leaves it open, with
+nothing outlined: that is not a peek, so nothing is being pointed at.
 
 The control row is in that window too, along the bottom where it is on the
 board. Each button says what it **is** — the sink's own name, `sub`,
@@ -278,9 +285,10 @@ is simply dark.
  7   G  G  G  B  B  Y  Y  ·     memory — used · buffers · cache
 ```
 
-Each column is the busiest of its four threads rather than their average, so a
-single pegged core is visible instead of being smeared away. Memory across the
-bottom uses htop's colours.
+Each column is the busiest of its share of the threads rather than their
+average, so a single pegged core is visible instead of being smeared away — four
+threads a column on a 32-thread machine, and however they divide on any other.
+Memory across the bottom uses htop's colours.
 
 ## Network
 
@@ -342,8 +350,8 @@ pads is noise.
 
 ## Install
 
-Needs Python 3, `mido` and `python-rtmidi` for MIDI, `tkinter` for the habit
-window, and `numpy` for the spectrum.
+Needs Python 3, `mido` and `python-rtmidi` for MIDI, `tkinter` for the windows,
+and `numpy` for the spectrum.
 
 ```sh
 sudo pacman -S python-mido python-rtmidi python-numpy   # Arch
@@ -371,7 +379,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 682 tests, about forty-five seconds
+tests/run-tests             # 695 tests, about fifty seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
@@ -394,7 +402,7 @@ of `bin/launchpad-pomodoro` — change them there and those tabs work elsewhere.
 | outputs | a PipeWire sink named `game_stereo`, and any sink whose name contains `AT_ATH-M50xSTS` — matched on a fragment so re-plugging the headset into another port does not break it |
 | microphone | the source matching that same fragment; the headset pad sets both |
 | transport | Spotify, over MPRIS |
-| filesystems | `/`, `$HOME`, `~/Data-1`, `~/Fast-1`, with the yellow and red thresholds beside them |
+| filesystems | `/`, `$HOME`, `~/Data-1`, `~/Fast-1`; yellow under `FS_LOW` gigabytes free, red under `FS_CRIT`, the same thresholds for all of them |
 | temperatures | an AMD CPU (`k10temp`, `Tctl` and `Tccd2`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive, and SATA drives via `drivetemp` — thresholds are per part, and per drive type |
 | disks | whatever `/proc/mdstat` lists; no arrays means an empty row, not an error |
 | subwoofer | two channels of a multichannel interface (`TASCAM_SERIES_208i`, LINE OUT 3/4), fed by links something else maintains — the pad only sets those channels' volume |

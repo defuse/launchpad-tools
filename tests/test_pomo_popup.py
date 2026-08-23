@@ -328,6 +328,40 @@ def test_a_labelled_cell_is_still_the_pad(win, capsys):
     assert 'press\t1\t4' in capsys.readouterr().out
 
 
+RESET = [{'row': 0, 'name': 'reset', 'state': 'reset', 'live': [7],
+          'cells': [None] * 7 + ['#ff4444']}]
+
+
+def test_a_null_cell_is_no_pad_at_all(win):
+    """As against a pad that is unlit and has a colour of its own: it takes the
+    page's background and disappears."""
+    load(win, rows=RESET)
+    assert win.row_pads[0][0].cget('bg') == win.mod.BG
+    assert win.row_pads[0][7].cget('bg') == '#ff4444'
+
+
+def test_only_the_live_cells_of_a_row_are_buttons(win, capsys):
+    """The other seven of that row are the tab strip, which this window is
+    not, and a click landing on one would switch tabs."""
+    load(win, rows=RESET)
+    capsys.readouterr()
+    for c in range(7):
+        win.row_pads[0][c].event_generate('<Button-1>', x=4, y=4)
+    win.root.update()
+    assert capsys.readouterr().out == ''
+    win.row_pads[0][7].event_generate('<Button-1>', x=4, y=4)
+    win.root.update()
+    assert 'press\t0\t7' in capsys.readouterr().out
+
+
+def test_the_reset_hint_points_back_at_it(win):
+    """It is the last cell of its row, so the hint goes to its right and points
+    left -- the same way an elapsed row's claim hint does."""
+    load(win, rows=RESET)
+    assert win.row_hints[0].cget('text').startswith('←')
+    assert win.row_lefts[0].cget('text') == ''
+
+
 def test_the_labels_survive_a_repaint(win):
     load(win, rows=BAR)
     win.handle('data\t' + json.dumps({'rows': BAR, 'todo': win.todo}))

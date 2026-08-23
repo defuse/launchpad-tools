@@ -19,6 +19,7 @@ to keep right.
 
 stdin:   data <json>   the cells: [{r, c, name, value, colour}, ...]
          show R C      display, with that cell outlined
+         show          display, with none of them outlined
          hide          withdraw
 stdout:  nothing. It is a readout, not a control.
 
@@ -228,8 +229,11 @@ class Grid:
             self.cells = {(int(d['r']), int(d['c'])): d for d in json.loads(p[1])}
             if self.root.state() != 'withdrawn':
                 self.paint()
-        elif cmd == 'show' and len(p) > 2:
-            self.focus_rc = (int(p[1]), int(p[2]))
+        elif cmd == 'show':
+            # with a cell, when a pad is being held: that one is outlined.
+            # Without, when the window was opened from the red pad: nothing is
+            # being pointed at, so nothing is marked
+            self.focus_rc = (int(p[1]), int(p[2])) if len(p) > 2 else None
             self.paint()
             self.place()
             self.root.deiconify()

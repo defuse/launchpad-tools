@@ -14,6 +14,7 @@ stdin:   data <json>   merge states while a window is open (see handle())
                        state: 0 unstarted, 1 started (red), 2 complete (green)
          show R C      read-only,  cell R,C outlined YELLOW  (pad held)
          edit R C      editable,   cell R,C outlined RED     (triple click)
+         edit          editable,   nothing selected          (the red pad)
          hide          withdraw
          focus R C     move the selection
          commit        save and close (clicking the selected pad again)
@@ -359,7 +360,9 @@ class Grid:
         # A short line used to raise IndexError out of handle(), out of pump(),
         # and the after() loop was never rescheduled -- the window stayed up but
         # stopped listening to the board for the rest of the session.
-        need = {'load':2, 'data':2, 'show':3, 'edit':3, 'focus':3}.get(cmd, 1)
+        # 'edit' takes a cell to select, or none at all -- opened from the red
+        # pad nothing is being pointed at, so nothing is selected
+        need = {'load':2, 'data':2, 'show':3, 'focus':3}.get(cmd, 1)
         if len(p) < need:
             return
         if cmd=='load':
@@ -383,8 +386,9 @@ class Grid:
                 self.habits = incoming
                 if self.mode: self.paint()
         elif cmd in ('show','edit'):
-            r,c = int(p[1]), int(p[2])
-            self.mode, self.focus_rc = cmd, (r,c)
+            r,c = (int(p[1]), int(p[2])) if len(p) > 2 else (None, None)
+            self.mode = cmd
+            self.focus_rc = None if r is None else (r,c)
             self.place(); self.paint(); self.root.deiconify(); self.root.lift()
             self.root.update_idletasks(); self.fit()
             # xfwm only publishes _NET_FRAME_EXTENTS once it has drawn the

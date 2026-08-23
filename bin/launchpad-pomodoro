@@ -4,61 +4,36 @@
 """
 Pomodoro board on a Novation Launchpad Mini MK3.
 
-  row 8 (top)   MODE ROW. One pad per mode, lit bright when selected and dim
-                when not. Modes keep their own state and keep running while
-                hidden -- a pomodoro started in mode 1 still finishes (and still
-                chimes) while you are looking at mode 2.
-                RIGHTMOST pad is RED: HOLD 2s to reset the board to default.
-                Holding fills the row leftward so you can see it coming, and
-                letting go early cancels -- a corner pad is too easy to brush
-                for a single press to be allowed to kill a running timer.
-  row 7         DAY BAR. How much of today has begun, one pad per three
-                hours, deep blue and read-only -- the same bar the daily habit
-                tab carries, drawn by the same code.
-  rows 6..3     four independent pomodoro timers, one per row.
-  row 2         free toggles, press cycles off -> red -> green -> off.
-  row 1         break timer. The same state machine as a pomodoro row, but
-                8 x 1 min = 8 min, idle light blue instead of white, and it
-                fills blue instead of green.
+Seven tabs on the top row -- timers, two habit grids, machine and audio, a
+spectrum, and CPU and network meters -- over the same 64 pads. README.md draws
+each of them pad by pad; this is the part that matters to the code.
 
-The habit tabs give up their top row to the same kind of bar, each for its own
-period: the daily tab shows the day, the weekly one shows the week, a pad per
-day. A cell lights as its slice STARTS, so a full bar means you are inside the
-last slice -- the weekly bar turns pink for Saturday, while the daily one stays
-blue until an hour is left and then counts itself down: yellow blinking slowly
-from 23:00, orange at the pomodoro cadence from 23:30, red at twice that from
-23:40, rapid red from 23:50, and a panic strobe for the last five minutes.
+Rows are numbered from the TOP, as the pads are addressed here: row 0 is the tab
+strip, rows 1..7 are the tab's own. What each row means is declared once, in
+TAB_ROWS: drawing reads it and so does press dispatch, so a row cannot come to
+mean one thing to the eye and another to the finger. Rows owned by a read-only
+widget -- a bar, a meter -- have no gesture at all, by construction rather than
+by a guard somebody has to remember to write.
 
-The machine tab, fourth from the left, is read-only except its bottom row:
+The rightmost pad of the tab strip is red and does two jobs, told apart by how
+long it is down: a tap opens or closes this tab's window, a 2s hold resets what
+the tab owns. Holding fills the row leftward so you can see it coming, and
+letting go early cancels -- a corner pad is too easy to brush for a single press
+to be allowed to kill a running timer.
 
-  row 7   day bar again
-  row 6   RAID members, one pad per physical DISK -- green in sync, amber
-          rebuilding or in a degraded array, strobing red failed
-  row 5   filesystems: /, /home, Data-1, Fast-1. Green over 100GB free,
-          yellow under, red under 30GB, strobing if it is not mounted at all
-  row 3   temperatures: CPU, GPU, NVMe, with thresholds per part
-  row 1   output to game_stereo | output to the headset (and its mic) | gap |
-          EasyEffects on/off | gap | previous | play/pause | next
-          Every one of these shows the state the system is actually in, so
-          changing the output or the effects anywhere else moves the pads.
-  rows 4, 2   reserved, drawn dark
+Tabs keep their own state and keep running while hidden: a pomodoro started on
+the timers tab still finishes, and still chimes, while you are looking at the
+spectrum.
 
-  The output pads show the default sink and nothing else. The EasyEffects pad
-  is an on/off switch whose COLOUR says which preset is live: white off, green
-  for the room, orange for the headset. Both the preset and the bypass state
-  are asked of EasyEffects once a second while this tab is drawn, and not at
-  all otherwise -- see read_easyeffects().
+Row 1 of most tabs is an elapsed-time bar -- how much of the day, or of the
+week, has begun. See Period, which draws all of them from one description.
 
-Everything on that tab is sampled by a background thread and drawn from a
+Everything on the machine tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
-takes a quarter of a second and a frame is 50ms. That query is never used for
-polling anyway -- it starts a second EasyEffects to talk to the first, which
-closes the window the first one has open -- so the bypass state is read out of
-the config file EasyEffects writes it to.
-
-The spectrum tab next to it is the audio you are listening to, captured from
-the current output's monitor and drawn as eight bands with peak markers. It
-follows the output, and the capture only runs while the tab is on screen.
+takes a quarter of a second and a frame is 50ms. That call also starts a second
+EasyEffects to talk to the first, which closes the window the first one has
+open -- so it is made once a second while that tab is drawn and not at all
+otherwise. See read_easyeffects(), and Machine.leave().
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -91,12 +66,6 @@ A pomodoro row, left to right, is its own progress bar:
   without letting go, and that hold is not an abandon gesture. The selected tab
   is saved with the rest of the state, so a restart puts the pads back to
   meaning what they meant before it.
-
-  What each row means is declared once, in TAB_ROWS: drawing reads it and so
-  does press dispatch, so a row cannot come to mean one thing to the eye and
-  another to the finger. Rows owned by a read-only widget -- a bar, a meter --
-  have no gesture at all, by construction rather than by a guard somebody has
-  to remember to write.
 
 The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
@@ -134,12 +103,12 @@ TICK = 0.05
 SPEC_TICK = 0.02
 
 OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
-# A done todo item is a brighter green than a claimed pomodoro: the two rows sit
-# one above the other, and the same green in both reads as one block. Sent as
-# RGB, since the palette has no green like it. Green at full with the other two
-# held well down -- (80, 127, 90) was so near grey that the pad read as white,
-# which is what an unstarted named slot looks like.
-TODO_DONE = (35, 127, 70)
+# A done todo item is a deep green, and a claimed pomodoro the palette's spring
+# green: the two rows sit one above the other, and the same green in both reads
+# as one block. Sent as RGB, since the palette has no green like it. Almost no
+# red and no blue at all -- (80, 127, 90) came out near grey and read as white,
+# (35, 127, 70) still had enough blue to look like mint.
+TODO_DONE = (6, 92, 6)
 YELLOW, CYAN = 13, 33
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
@@ -171,7 +140,7 @@ MACHINE_POPUP = os.path.expanduser('~/.local/bin/machine-popup')
 POMO_POPUP = os.path.expanduser('~/.local/bin/pomo-popup')
 # What the pads are showing, in CSS, for the window that mirrors them
 PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
-           BLUE: '#5a7bff', TODO_DONE: '#46ff8d',
+           BLUE: '#5a7bff', TODO_DONE: '#0cb90c',
            # the bar's last hour: yellow at 23:00, orange at 23:30, red after.
            # Purple and pink are the week filling and full, which no window
            # shows today -- but a bar's colour missing from here comes out as
@@ -412,7 +381,8 @@ DRIVE_LIMITS = {True:  (45, 50, 55),       # spinning
 
 
 class Mount(NamedTuple):
-    """A filesystem worth watching, and how empty is too empty."""
+    """A filesystem worth watching. How empty is too empty is FS_LOW/FS_CRIT,
+    the same for all of them."""
     name: str
     path: str
 
@@ -452,11 +422,6 @@ MAIN_CHANNELS = (0, 1)                     # the speakers' own pair
 # two states become wrong and the levels want to be full and full.
 SUB_HALF = 52016                           # PulseAudio's scale is cubic: 0.5 linear
 SUB_FULL = 65536                           # ...and this is 1.0
-# EasyEffects writes its bypass state here the moment it changes, which is the
-# only way to read it that does not touch the application. Asking the CLI
-# (`easyeffects -b 3`) starts a second instance to talk to the first, and that
-# closes the window the first one has open -- once a poll, every poll.
-EE_CONF = os.path.expanduser('~/.config/easyeffects/db/easyeffectsrc')
 # Which preset EasyEffects loads for which output. Read rather than configured
 # here: the pad should follow whatever autoload is actually set to, so renaming
 # a preset in EasyEffects cannot leave the board lying about it.
@@ -1309,11 +1274,21 @@ class Board:
             return [PAD_HEX.get(self.shown.get(pad(r, c), (0, OFF))[1], '#191920')
                     for c in range(CELLS)]
 
-        # the bar first, because that is where it is on the board. It is read
+        # The reset pad, top right, where it is on the board. The rest of that
+        # row is the tab strip, which this window is not, so those cells are
+        # null and do not appear -- except while the pad is held, when the
+        # two-second fill sweeps across them and they are red. So the fill runs
+        # here as well, out of the same pads, and only the reset pad is live.
+        reset = [c if (i == RESET_COL
+                       or self.shown.get(pad(FUNC_ROW, i), (0, OFF))[1] == RED)
+                 else None for i, c in enumerate(lit(FUNC_ROW))]
+        # then the bar, because that is where it is on the board. It is read
         # only, and here it can say what each of its pads means -- which is the
         # one thing the row itself cannot tell you
         bar = BARS[M_POMO]
-        rows = [{'row': BAR_ROW, 'name': 'time of day', 'state': 'bar',
+        rows = [{'row': FUNC_ROW, 'name': 'reset', 'state': 'reset',
+                 'cells': reset, 'live': [RESET_COL]},
+                {'row': BAR_ROW, 'name': 'time of day', 'state': 'bar',
                  'cells': lit(BAR_ROW), 'labels': bar.labels()}]
         for i, r in enumerate(TIMER_ROWS):
             t = TIMERS[r]
@@ -2160,14 +2135,16 @@ class Board:
                 was, self.mode = self.mode, lc
                 if lc != M_MACH:
                     self.machine.leave()       # stop querying EasyEffects now
-                if was in HAB_MODES and lc in HAB_MODES and self._editing:
+                if (was in HAB_MODES and lc in HAB_MODES
+                        and (self._editing or self._window in HAB_MODES)):
                     # between the two habit tabs the window stays put and swaps
                     # the whole table; a merge would leave the other tab's
                     # habits behind
                     self._popup_mode = lc
                     self._popup_send_table('load')
-                    er, ec = self._editing
-                    self._popup_cmd(f'focus\t{er}\t{ec}')
+                    if self._editing:
+                        er, ec = self._editing
+                        self._popup_cmd(f'focus\t{er}\t{ec}')
                 elif self._window is not None or self._editing:
                     # something was on screen, so the new tab's window takes its
                     # place -- or nothing does, on a tab that has none. The
@@ -2214,8 +2191,11 @@ class Board:
             self.close_window()
             return
         if self.mode in HAB_MODES:
-            r, c = self._editing or (HAB_ROWS[0], 0)
-            self.edit_habit(r, c)
+            # whatever was selected last time stays selected; otherwise nothing
+            # is, since nothing was pointed at. It used to fall back to the
+            # top-left cell, which put a red editing box around a habit the
+            # moment the window opened
+            self.edit_habit(*self._editing) if self._editing else self.edit_habit()
         elif self.mode == M_POMO:
             self._window, self._pomo_sent = M_POMO, None
             self._pomo_send()
@@ -2223,7 +2203,9 @@ class Board:
             return
         elif self.mode == M_MACH:
             self._machine_send()
-            self._machine_cmd(f'show\t{DISK_ROW}\t{centred(len(self.machine.snap.disks))}')
+            # no cell named: a peek marks the pad being held, and this was not
+            # a peek. Nothing is being pointed at, so nothing is outlined
+            self._machine_cmd('show')
         else:
             return                               # nothing to show for a meter
         self._window = self.mode
@@ -2313,18 +2295,20 @@ class Board:
         """Make (r,c) the selected cell, opening the window if it is closed."""
         if self._editing == (r, c):
             return                              # already selected; Esc closes
-        if self._editing:
+        if self._editing or self._window in HAB_MODES:
+            # the window is up -- from a pad, or from the red one with nothing
+            # selected -- so this is a move of the selection, not an opening
             self._editing = (r, c)
             self._popup_cmd(f'focus\t{r}\t{c}')
         else:
             self.edit_habit(r, c)
 
-    def edit_habit(self, r, c):
-        """Open the window with this cell selected. Esc is the only way out."""
+    def edit_habit(self, r=None, c=None):
+        """Open the window, with this cell selected or with none. Esc closes."""
         self._popup_mode = self.mode
         self._popup_send_table()
-        self._popup_cmd(f'edit\t{r}\t{c}')
-        self._editing = (r, c)
+        self._popup_cmd('edit' if r is None else f'edit\t{r}\t{c}')
+        self._editing = None if r is None else (r, c)
 
     def cycle_state(self, r, c, mode=None):
         h = dict(self.habit(r, c, mode))

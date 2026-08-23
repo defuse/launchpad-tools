@@ -60,6 +60,9 @@ HINTS = {
     'running': (('hold 2s to abandon \u2192', GREEN), None),
     'elapsed': (('write it off \u2192', RED), ('\u2190 claim it', GREEN)),
     'claimed': (('hold 2s to clear \u2192', GREEN), None),
+    # the reset pad is the last cell of its row, so its hint goes on the right
+    # and points back at it, the same way an elapsed row's claim hint does
+    'reset':   (None, ('\u2190 click closes it \u00b7 hold 2s resets', RED)),
 }
 
 
@@ -225,6 +228,10 @@ class Window:
             # above slot c and the window is a mirror rather than two rows that
             # happen to have eight of something
             cells, caps = [], []
+            # which cells of this row are buttons. Said rather than assumed:
+            # the reset row's other seven pads are the tab row, which is not
+            # in this window, and a click landing on one would switch tabs
+            live = info.get('live')
             for c in range(COLS):
                 p = tk.Frame(self.outer, bg=CELL_BG, width=PAD_W, height=PAD_W,
                              highlightthickness=3, highlightbackground=BG)
@@ -235,7 +242,7 @@ class Window:
                 cap = tk.Label(p, text='', font=('DejaVu Sans', 13), bg=CELL_BG,
                                fg=CELL_BG)
                 cap.place(relx=0.5, rely=0.5, anchor='center')
-                for w in (p, cap):
+                for w in (p, cap) if live is None or c in live else ():
                     w.bind('<ButtonPress-1>',
                            lambda ev, rr=info['row'], cc=c: say(f'press\t{rr}\t{cc}'))
                     w.bind('<ButtonRelease-1>',
@@ -308,7 +315,10 @@ class Window:
                 labels = info.get('labels') or []
                 for c, colour in enumerate(info.get('cells', [])[:COLS]):
                     pad = self.row_pads[info['row']][c]
-                    bg = colour or CELL_BG
+                    # null is no pad at all, as against a pad that is unlit
+                    # and has a colour of its own: it takes the page's
+                    # background and disappears
+                    bg = colour or BG
                     pad.configure(bg=bg)
                     cap = self.row_caps[info['row']][c]
                     text = labels[c] if c < len(labels) else ''
