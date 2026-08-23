@@ -12,7 +12,7 @@ REPO="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 BIN="$HOME/.local/bin"
 SHARE="$HOME/.local/share/launchpad-pomodoro"
 UNIT="$HOME/.config/systemd/user/launchpad-pomodoro.service"
-PROGS=(launchpad-pomodoro habit-popup launchpad-smoketest)
+PROGS=(launchpad-pomodoro habit-popup machine-popup launchpad-smoketest)
 
 if [ "${1:-}" = "--uninstall" ]; then
     systemctl --user disable --now launchpad-pomodoro.service 2>/dev/null || true

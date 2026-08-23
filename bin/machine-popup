@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 Taylor Hornby
+"""
+Machine grid window for the Launchpad machine tab.
+
+Mirrors the four read-only rows of that tab -- disks, filesystems, drive
+temperatures, system temperatures -- in the same eight columns, so a pad on the
+board and a cell on screen are the same thing in the same place. Held open only
+while a pad is held: the board sends show on the press and hide on the release.
+
+The pads say green or yellow or red. This says 37C, or 812 GB, or that sdb is
+the drive in question, which is the part a colour cannot carry.
+
+stdin:   data <json>   the cells: [{r, c, name, value, colour}, ...]
+         show R C      display, with that cell outlined
+         hide          withdraw
+stdout:  nothing. It is a readout, not a control.
+
+Resident like habit-popup, and for the same reason: spawning python and Tk per
+peek was visibly laggy, and this one is shown for as long as a finger stays
+down.
+"""
+import sys, json, re, subprocess, threading, queue
+import tkinter as tk
+
+ROWS = (2, 3, 4, 5)                        # the machine tab's read-only rows
+COLS = 8
+BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
+YELLOW_B = '#ffd21a'                       # the held cell, as in habit-popup
+TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps'}
+
+
+def g9_centre_box():
+    """The widest monitor's work area, clamped to a sensible width.
+
+    Lifted from habit-popup deliberately: both windows appear in the same place
+    at the same size, so a peek always lands where the last one did.
+    """
+    try:
+        mons = subprocess.run(['xrandr', '--listmonitors'],
+                              capture_output=True, text=True).stdout
+        best = None
+        for line in mons.splitlines():
+            m = re.search(r'(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)', line)
+            if m:
+                w, h, x, y = map(int, m.groups())
+                if not best or w > best[0]:
+                    best = (w, h, x, y)
+        gw, gh, gx, gy = best
+        wa = subprocess.run(['xprop', '-root', '_NET_WORKAREA'],
+                            capture_output=True, text=True).stdout
+        n = [int(v) for v in re.findall(r'\d+', wa.split('=')[1])]
+        top, bot = max(gy, n[1]), min(gy + gh, n[1] + n[3])
+        w = min(3840, gw)
+        # four rows rather than the habit window's six, so two thirds the height
+        return w, int((bot - top) * 0.62), gx + (gw - w) // 2, top
+    except Exception:
+        return 1600, 700, 100, 100
+
+
+class Grid:
+    def __init__(self):
+        self.cells = {}                    # (r,c) -> {name, value, colour}
+        self.focus_rc = None
+        self._fits = []
+        self.root = tk.Tk()
+        self.root.title('machine')
+        self.root.configure(bg=BG)
+        self.root.attributes('-topmost', True)
+        w, h, x, y = g9_centre_box()
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+        self.root.protocol('WM_DELETE_WINDOW', self.hide)
+
+        outer = tk.Frame(self.root, bg=BG)
+        outer.pack(fill='both', expand=True, padx=22, pady=14)
+        self.frames, self.names, self.values, self.titles = {}, {}, {}, {}
+        for i, r in enumerate(ROWS):
+            outer.grid_rowconfigure(i, weight=1)
+            for c in range(COLS):
+                outer.grid_columnconfigure(c, weight=1)
+                f = tk.Frame(outer, bg=CELL_BG, highlightthickness=5,
+                             highlightbackground=BG)
+                f.grid(row=i, column=c, sticky='nsew', padx=4, pady=4)
+                f.grid_propagate(False)
+                self.frames[(r, c)] = f
+                # the row's own name, once, in the leftmost cell that has one
+                t = tk.Label(f, text='', font=('DejaVu Sans', 13), fg=MUTED, bg=CELL_BG)
+                t.pack(anchor='nw', padx=10, pady=(6, 0))
+                self.titles[(r, c)] = t
+                v = tk.Label(f, text='', font=('DejaVu Sans', 34, 'bold'),
+                             fg=MUTED, bg=CELL_BG)
+                v.pack(expand=True)
+                self.values[(r, c)] = v
+                n = tk.Label(f, text='', font=('DejaVu Sans', 16), fg=MUTED, bg=CELL_BG)
+                n.pack(anchor='sw', padx=10, pady=(0, 6))
+                self.names[(r, c)] = n
+        self.root.bind_all('<Escape>', lambda ev: (self.hide(), 'break')[1])
+        self.root.withdraw()
+
+    # ---- geometry --------------------------------------------------------
+    def fit(self):
+        """Keep the frame inside the work area. Same reasoning as habit-popup:
+        geometry() sizes the client area and the WM adds its own furniture, so
+        measure the mapped window rather than predicting it."""
+        try:
+            self.root.update_idletasks()
+            wa = subprocess.run(['xprop', '-root', '_NET_WORKAREA'],
+                                capture_output=True, text=True).stdout
+            n = [int(v) for v in re.findall(r'\d+', wa.split('=')[1])]
+            ex = subprocess.run(['xprop', '-id', str(self.root.winfo_id()),
+                                 '_NET_FRAME_EXTENTS'],
+                                capture_output=True, text=True).stdout
+            border = int(re.findall(r'\d+', ex.split('=')[1])[3]) if '=' in ex else 8
+            h = n[1] + n[3] - self.root.winfo_rooty() - border
+            if 240 <= h < self.root.winfo_height():
+                self.root.geometry(f'{self.root.winfo_width()}x{h}')
+        except Exception:
+            pass
+
+    # ---- painting --------------------------------------------------------
+    def paint(self):
+        for r in ROWS:
+            titled = False
+            for c in range(COLS):
+                cell = self.cells.get((r, c))
+                frame = self.frames[(r, c)]
+                colour = (cell or {}).get('colour') or MUTED
+                self.values[(r, c)].configure(text=(cell or {}).get('value', ''),
+                                              fg=colour)
+                self.names[(r, c)].configure(text=(cell or {}).get('name', ''))
+                # the row's label sits on its first occupied cell, so the grid
+                # reads as four named rows without a column of headers
+                self.titles[(r, c)].configure(
+                    text='' if titled or not cell else TITLES.get(r, ''))
+                titled = titled or bool(cell)
+                edge = YELLOW_B if self.focus_rc == (r, c) else BG
+                frame.configure(highlightbackground=edge, highlightcolor=edge)
+
+    # ---- protocol --------------------------------------------------------
+    def handle(self, line):
+        p = line.split('\t')
+        cmd = p[0]
+        if cmd == 'data' and len(p) > 1:
+            self.cells = {(int(d['r']), int(d['c'])): d for d in json.loads(p[1])}
+            if self.root.state() != 'withdrawn':
+                self.paint()
+        elif cmd == 'show' and len(p) > 2:
+            self.focus_rc = (int(p[1]), int(p[2]))
+            self.paint()
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes('-topmost', True)
+            self.root.update_idletasks()
+            self.fit()
+            for ms in (120, 600):
+                self._fits.append(self.root.after(ms, self.fit))
+        elif cmd == 'hide':
+            self.hide()
+
+    def hide(self):
+        while self._fits:
+            try:
+                self.root.after_cancel(self._fits.pop())
+            except Exception:
+                pass
+        self.focus_rc = None
+        self.root.withdraw()
+
+    def run(self):
+        q = queue.Queue()
+
+        def rd():
+            for l in sys.stdin:
+                q.put(l.rstrip('\n'))
+            q.put(None)
+        threading.Thread(target=rd, daemon=True).start()
+
+        def pump():
+            # one bad line must never stop the pump, or the window goes deaf
+            try:
+                while True:
+                    l = q.get_nowait()
+                    if l is None:
+                        self.root.destroy()
+                        return
+                    try:
+                        self.handle(l)
+                    except Exception as e:
+                        print(f'bad command {l[:60]!r}: {e!r}', file=sys.stderr, flush=True)
+            except queue.Empty:
+                pass
+            self.root.after(16, pump)
+        self.root.after(16, pump)
+        self.root.mainloop()
+
+
+if __name__ == '__main__':
+    Grid().run()

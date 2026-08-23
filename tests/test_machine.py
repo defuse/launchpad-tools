@@ -122,7 +122,7 @@ def test_the_disks_and_filesystems_sit_in_the_middle(mach, mod):
     painted = show(mach, mod, mod.Snapshot(disks=disks), mod.DISK_ROW)
     assert painted[0] == mod.OFF and painted[7] == mod.OFF
     assert painted[1:7] == [mod.DISK_OK] * 6
-    mounts = tuple((m, 900) for m in mod.MOUNTS)               # four filesystems
+    mounts = tuple((m, 900, 40.0) for m in mod.MOUNTS)         # four filesystems
     painted = show(mach, mod, mod.Snapshot(mounts=mounts), mod.FS_ROW)
     assert painted[:2] == [mod.OFF] * 2 and painted[6:] == [mod.OFF] * 2
     assert painted[2:6] == [mod.GREEN] * 4
@@ -135,14 +135,14 @@ def test_the_disks_and_filesystems_sit_in_the_middle(mach, mod):
     (29, 'RED'), (0, 'RED'),
 ])
 def test_filesystem_colours_by_room_left(mach, mod, free, colour):
-    snap = mod.Snapshot(mounts=((mod.MOUNTS[0], free),))
+    snap = mod.Snapshot(mounts=((mod.MOUNTS[0], free, 12.0),))
     show(mach, mod, snap, mod.FS_ROW)
     assert middle(mach, mod, mod.FS_ROW, 1) == [getattr(mod, colour)]
 
 
 def test_a_filesystem_that_is_not_there_strobes(mach, mod):
     """All four are always mounted, so a missing one is news, not a blank."""
-    snap = mod.Snapshot(mounts=((mod.MOUNTS[0], None),))
+    snap = mod.Snapshot(mounts=((mod.MOUNTS[0], None, None),))
     show(mach, mod, snap, mod.FS_ROW)
     assert middle(mach, mod, mod.FS_ROW, 1)[0] in (mod.RED, mod.OFF)
 

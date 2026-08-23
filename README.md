@@ -116,6 +116,12 @@ Everything above the bottom row is read-only:
 | drive temperatures | one per drive, in its own column below its health pad |
 | temperatures | pale blue normal, yellow warm, red hot, strobing red too hot |
 
+**Hold any of those four pads** and a window appears for as long as you hold
+it, laid out as the same grid: the same rows in the same columns, with the held
+cell outlined. It carries what a colour cannot — which drive, how many degrees,
+how many gigabytes and what share of the volume that is. It is a readout, not a
+control; releasing the pad closes it.
+
 Rows 2 and 4 are the same six drives in the same order, so a column is one
 drive: its array state above, its temperature below. Drive temperatures need
 the `drivetemp` module (`modprobe drivetemp`); without it that row is dark,
@@ -278,7 +284,7 @@ cd launchpad-tools
 ./install.sh
 ```
 
-That symlinks the three programs into `~/.local/bin`, copies the chimes to
+That symlinks the four programs into `~/.local/bin`, copies the chimes to
 `~/.local/share/launchpad-pomodoro/`, and enables a systemd user service. Since
 they are symlinks, `git pull` updates what is installed. Nothing needs root and
 nothing is written outside `$HOME`.
@@ -295,7 +301,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 409 tests, about eleven seconds
+tests/run-tests             # 434 tests, about thirteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
