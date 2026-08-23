@@ -141,8 +141,8 @@ pads follow.
 **While this tab is on screen it queries EasyEffects once a second, and that
 closes the EasyEffects window if you have one open.** Any invocation of its CLI
 does, there is no quieter way to ask, and its config file is written too lazily
-to use instead. Switch to another tab while working in the UI; nothing is asked
-from anywhere else.
+to use instead. Switching to another tab stops it on the press — not after a
+delay, which would spend one more window on someone who had already left.
 
 ## Spectrum
 
@@ -277,7 +277,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 376 tests, about ten seconds
+tests/run-tests             # 379 tests, about ten seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

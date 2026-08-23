@@ -672,7 +672,11 @@ class Machine:
     """
     AUDIO, EFFECTS, TEMPS, DISKS = 1.0, 5.0, 5.0, 30.0
     PRESET = 1.0                       # how often, while the tab is on screen
-    PRESET_IDLE = 3.0                  # stop asking this long after the last frame
+    # Backstop only: leaving the tab calls leave() and stops the asking at
+    # once. This catches the case where frames stop for some other reason, and
+    # is deliberately close to one frame -- a longer grace means another
+    # EasyEffects window closing after you have already walked away.
+    PRESET_IDLE = 0.5
     SETTLE = 0.35                      # let a press land before reading it back
 
     def __init__(self):
@@ -766,6 +770,16 @@ class Machine:
         """The machine tab is on screen. Only then is the preset worth the
         process it costs to ask for."""
         self.watched = now if now is not None else time.time()
+
+    def leave(self):
+        """The tab is gone: ask EasyEffects nothing more, starting now.
+
+        Not a timeout. Every query closes the EasyEffects window, so a grace
+        period spends one on somebody who has already switched away -- which
+        is exactly what it looks like from the other side: you leave the tab
+        to stop it, and it takes your window one more time.
+        """
+        self.watched = 0.0
 
     def read_easyeffects(self):
         """Preset AND bypass, asked of EasyEffects itself, in one process.
@@ -1660,6 +1674,8 @@ class Board:
         if lr == FUNC_ROW:
             if lc in TABS:                     # reset pad is hold-only, see render()
                 self.mode = lc
+                if lc != M_MACH:
+                    self.machine.leave()       # stop querying EasyEffects now
                 if self._editing:
                     if lc in HAB_MODES:
                         # window follows the tab: swap the whole table

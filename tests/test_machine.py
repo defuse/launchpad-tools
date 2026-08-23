@@ -556,6 +556,35 @@ def test_the_read_back_does_not_wait_for_the_next_cadence(mach, mod, asked):
     assert asked_ee(calls) == [ASK], 'the press jumps the queue'
 
 
+def test_leaving_the_tab_stops_the_asking_immediately(mach, mod, asked):
+    """THE BUG: a three second grace period meant another query -- and so
+    another EasyEffects window closing -- landed after you had switched away
+    precisely to stop it. Leaving is an event, not something to time out."""
+    calls, _ = asked
+    m = looking(mach)
+    m.read_easyeffects()
+    assert len(asked_ee(calls)) == 1, 'asked while the tab was up'
+    mach.press(mod.pad(mod.FUNC_ROW, mod.M_POMO))          # switch away
+    m.read_easyeffects()
+    m.read_easyeffects()
+    assert len(asked_ee(calls)) == 1, 'and not once more after leaving'
+
+
+def test_switching_between_tabs_that_both_show_it_keeps_asking(mach, mod, asked):
+    """Only leaving for a tab without the control row stops it."""
+    calls, _ = asked
+    m = looking(mach)
+    mach.press(mod.pad(mod.FUNC_ROW, mod.M_MACH))          # the same tab again
+    m.read_easyeffects()
+    assert len(asked_ee(calls)) == 1
+
+
+def test_the_idle_backstop_is_about_a_frame(mod):
+    """It only exists for frames stopping some other way; longer, and it starts
+    doing what leave() is there to prevent."""
+    assert mod.Machine.PRESET_IDLE <= 1.0
+
+
 def test_it_asks_every_time_while_the_tab_is_up(mach, mod, asked):
     """A preset or a bypass changed in the EasyEffects UI has to show up on the
     pad, and nothing about the output changes when it does."""
