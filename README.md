@@ -124,14 +124,15 @@ which preset is live: white off, green for the room preset, orange for the
 headset one. Which preset counts as the headset one comes from EasyEffects' own
 autoload bindings, so renaming a preset there cannot leave the pad lying.
 
-The loaded preset is asked of EasyEffects directly, because nothing else knows
-in time — it records the name in its config file but writes that file lazily,
-measured still naming the previous preset a minute after autoload had switched
-it. Asking costs a process, and worse, reaches the running instance and closes
-whatever window it has open. So the board asks only while the tab is being
-drawn, only when the EasyEffects window is closed, and only when the output has
-changed or ten seconds have gone by. With the window open it falls back to the
-recorded name, on the grounds that you are looking at the real one.
+The loaded preset is asked of EasyEffects directly, once a second, because
+nothing else knows in time — it records the name in its config file but writes
+that file lazily, measured still naming the previous preset a minute after
+autoload had switched it.
+
+Asking costs a process and closes the EasyEffects window if one is open, and it
+asks anyway: a pad that quietly disagrees with the UI is worse than a window
+that shuts, which is at least obvious and stops the moment you leave the tab.
+Nobody looking means nobody asking, so it costs nothing on any other tab.
 
 All of it comes from a background poller. Nothing is read during a frame:
 `easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
@@ -194,7 +195,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 351 tests, about nine seconds
+tests/run-tests             # 349 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

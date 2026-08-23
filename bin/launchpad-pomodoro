@@ -44,8 +44,8 @@ The machine tab, fourth from the left, is read-only except its bottom row:
   The output pads show the default sink and nothing else. The EasyEffects pad
   is an on/off switch whose COLOUR says which preset is live: white off, green
   for the room, orange for the headset. The preset name is asked of
-  EasyEffects, but only while this tab is drawn and only while its window is
-  closed -- see read_preset().
+  EasyEffects once a second while this tab is drawn, and not at all otherwise
+  -- see read_preset().
 
 Everything on that tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
@@ -578,18 +578,6 @@ def read_conf(key, section):
     return ''
 
 
-def ee_window_open():
-    """Is the EasyEffects window on screen?
-
-    Because asking EasyEffects anything closes it: every CLI invocation
-    reaches the running instance, which hides its window in response. So the
-    board asks only when nobody is using the UI -- and when somebody is, the
-    UI is showing them the preset anyway.
-    """
-    return bool(sh('xdotool', 'search', '--onlyvisible', '--name',
-                   '^Easy Effects$', timeout=2).strip())
-
-
 def headset_preset():
     """The preset EasyEffects autoloads for the headset, or ''.
 
@@ -652,21 +640,19 @@ class Machine:
     it last saw. A reading a few seconds stale is fine; a stalled board is not.
     """
     AUDIO, EFFECTS, TEMPS, DISKS = 1.0, 5.0, 5.0, 30.0
+    PRESET = 1.0                       # how often, while the tab is on screen
     PRESET_IDLE = 3.0                  # stop asking this long after the last frame
-    PRESET_MAX  = 10.0                 # ask again anyway, in case it changed in the UI
 
     def __init__(self):
         self.snap = Snapshot()
         self.watched = 0.0             # when the tab was last drawn
-        self._asked_for = None         # the sink the preset was last read for
-        self._asked_at = 0.0
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _loop(self):
         due = {}
-        jobs = (('preset', 0.5, self.read_preset),
+        jobs = (('preset', self.PRESET, self.read_preset),
                 ('audio', self.AUDIO, self.read_audio),
                 ('effects', self.EFFECTS, self.read_effects),
                 ('temps', self.TEMPS, self.read_temps),
@@ -719,28 +705,24 @@ class Machine:
         self.watched = now if now is not None else time.time()
 
     def read_preset(self):
-        """Which preset EasyEffects has loaded.
+        """Which preset EasyEffects has loaded, asked of EasyEffects.
 
-        Asked of EasyEffects itself, because nothing else knows in time: it
-        records the name in its config file, but writes that file lazily --
-        measured still naming the previous preset a minute after autoload had
-        switched it -- and the name is the one thing that cannot be worked out
-        from anywhere else. Deriving it from the output device would be a
-        guess, and would be wrong the moment a preset is chosen by hand.
+        Nothing else knows in time. It records the name in its config file but
+        writes that file lazily -- measured still naming the previous preset a
+        minute after autoload had switched it. Working it out from the output
+        device would be a guess, and wrong the moment a preset is picked by
+        hand. The graph, the cache and the plugin state do not carry the name
+        at all.
 
-        So: only while the tab is being drawn, only when the window is closed,
-        and only when the output has changed or ten seconds have passed.
+        Every second while the tab is on screen, and nothing else matters --
+        not even that the query closes the EasyEffects window if one is open.
+        A pad that quietly disagrees with the UI is worse than a window that
+        shuts: the shut window is at least obvious, and switching tabs stops
+        it. Nobody looking means nobody asking, so this costs nothing on any
+        other tab.
         """
-        now = time.time()
-        if now - self.watched > self.PRESET_IDLE:
+        if time.time() - self.watched > self.PRESET_IDLE:
             return                                  # nobody is looking
-        if self.snap.sink == self._asked_for and now - self._asked_at < self.PRESET_MAX:
-            return                                  # nothing has changed
-        if ee_window_open():
-            # their window, their business: fall back to the recorded name
-            self.assume(preset=read_conf('lastLoadedOutputPreset', '[Presets]'))
-            return
-        self._asked_for, self._asked_at = self.snap.sink, now
         out = [l.strip() for l in sh('easyeffects', '-a', 'output').splitlines() if l.strip()]
         if out:
             self.assume(preset=out[-1])

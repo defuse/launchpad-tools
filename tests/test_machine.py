@@ -352,44 +352,25 @@ def test_drawing_the_tab_makes_it_ask(mach, mod, asked):
     assert mach.machine.snap.preset == 'at headphones'
 
 
-def test_it_does_not_ask_again_for_the_same_output(mach, mod, asked):
-    """Once per switch, not once per poll."""
+def test_it_asks_every_time_while_the_tab_is_up(mach, mod, asked):
+    """A preset changed in the EasyEffects UI has to show up on the pad, and
+    nothing about the output changes when it does."""
+    calls, _ = asked
+    mach.machine.attend()
+    for _ in range(3):
+        mach.machine.read_preset()
+    assert len(asked_ee(calls)) == 3
+
+
+def test_it_asks_even_with_the_easyeffects_window_open(mach, mod, asked):
+    """The query closes that window, and it is asked anyway: a pad quietly
+    disagreeing with the UI is worse than a window shutting, which is at least
+    obvious and stops as soon as you leave the tab."""
     calls, _ = asked
     mach.machine.attend()
     mach.machine.read_preset()
-    mach.machine.read_preset()
-    assert len(asked_ee(calls)) == 1
-
-
-def test_changing_the_output_makes_it_ask_again(mach, mod, asked):
-    calls, _ = asked
-    mach.machine.attend()
-    mach.machine.read_preset()
-    mach.machine.assume(sink='something else')
-    mach.machine.read_preset()
-    assert len(asked_ee(calls)) == 2
-
-
-def test_it_asks_again_eventually_in_case_you_changed_it_by_hand(mach, mod, asked, monkeypatch):
-    calls, _ = asked
-    mach.machine.attend()
-    mach.machine.read_preset()
-    mach.machine._asked_at -= mod.Machine.PRESET_MAX + 1
-    mach.machine.attend()
-    mach.machine.read_preset()
-    assert len(asked_ee(calls)) == 2
-
-
-def test_it_never_asks_while_the_easyeffects_window_is_open(mach, mod, asked, monkeypatch):
-    """Any CLI invocation reaches the running instance and closes its window.
-    While somebody has it open, the UI is showing them the preset anyway."""
-    calls, answers = asked
-    answers['xdotool'] = '102760473\n'
-    monkeypatch.setattr(mod, 'read_conf', lambda *a: 'recorded name')
-    mach.machine.attend()
-    mach.machine.read_preset()
-    assert asked_ee(calls) == []
-    assert mach.machine.snap.preset == 'recorded name', 'falls back to the record'
+    assert asked_ee(calls) == [['easyeffects', '-a', 'output']]
+    assert not [c for c in calls if c[0] == 'xdotool'], 'no window check at all'
 
 
 def test_drawing_the_machine_tab_counts_as_looking(mach, mod):
