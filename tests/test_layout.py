@@ -22,6 +22,13 @@ def test_the_pomodoro_tab_shows_the_same_day_as_the_daily_habit_tab(mod):
 
 
 @pytest.mark.parametrize('mode,row,widget', [
+    ('M_MACH', 'BAR_ROW',  'BAR'),
+    ('M_MACH', 'DISK_ROW', 'DISK'),
+    ('M_MACH', 'FS_ROW',   'FS'),
+    ('M_MACH', 'TEMP_ROW', 'TEMP'),
+    ('M_MACH', 'CTRL_ROW', 'CONTROL'),
+    ('M_MACH', 4, 'BLANK'),
+    ('M_MACH', 6, 'BLANK'),
     ('M_POMO', 'BAR_ROW', 'BAR'),
     ('M_POMO', 2, 'TIMER'),
     ('M_POMO', 6, 'TOGGLE'),
@@ -62,7 +69,16 @@ def painted(board, mod, out):
     return {board.rc(m.note)[0] for m in out.sent if board.rc(m.note)}
 
 
-@pytest.mark.parametrize('mode', ['M_POMO', 'M_HAB', 'M_HAB2', 'M_SYS', 'M_NET'])
+TAB_NAMES = ['M_POMO', 'M_HAB', 'M_HAB2', 'M_MACH', 'M_SYS', 'M_NET']
+
+
+def test_the_drawing_test_below_covers_every_tab(mod):
+    """Guards the parametrize list: a new tab that nobody drew a frame of
+    would otherwise just not be tested."""
+    assert set(mod.TABS) == {getattr(mod, n) for n in TAB_NAMES}
+
+
+@pytest.mark.parametrize('mode', TAB_NAMES)
 def test_a_tab_draws_exactly_the_rows_it_claims(mod, out, mode):
     """A row drawn but not claimed would take presses meant for something else;
     a row claimed but not drawn would keep the previous tab's colours."""

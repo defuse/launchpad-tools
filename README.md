@@ -13,7 +13,7 @@ them; everything else keeps running in the background.
 ```
      0      1       2      3   4    5      6      7
   ┌──────┬───────┬───────┬───┬───┬──────┬──────┬───────┐
-8 │ pomo │ daily │ weekly│   │   │ cpu  │ net  │ reset │   tabs
+8 │ pomo │ daily │ weekly│   │mch│ cpu  │ net  │ reset │   tabs
   ├──────┴───────┴───────┴───┴───┴──────┴──────┴───────┤
 7 │            day bar: 8 x 3 h, deep blue             │
   ├────────────────────────────────────────────────────┤
@@ -96,6 +96,31 @@ Slowing the blink lengthens the lit chunk rather than the gap — a dark chunk
 that grows with the period stops reading as a blink and starts reading as a pad
 that is off. The weekly bar never blinks: it is full for a whole day.
 
+## Machine and audio
+
+Third tab from the right. Everything above the bottom row is read-only:
+
+| row | |
+|---|---|
+| disks | one pad per physical drive — green in sync, amber rebuilding or in a degraded array, strobing red failed |
+| filesystems | `/`, `/home`, `Data-1`, `Fast-1` — green over 100GB free, yellow under, red under 30GB |
+| temperatures | CPU, GPU, NVMe, thresholds per part: 70°C is a warm CPU and a cooked NVMe |
+
+A pad is the whole drive rather than the partition, since three arrays can
+share a pair of drives and it is the drive that dies. A drive that has gone
+entirely cannot be listed — `/proc/mdstat` only names what is still there — so
+what you see is its array's survivor going amber.
+
+The bottom row is the only part you can press: output to `game_stereo`, output
+to the headset, a gap, EasyEffects on/off, a gap, then previous, play/pause and
+next. The output pads are white with the current one blue, and every pad shows
+what the system is actually doing rather than the last thing the board asked
+for — change the output in the tray applet and the pads follow. Picking the
+headset takes its microphone with it.
+
+All of it comes from a background poller. Nothing is read during a frame:
+`easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms.
+
 ## Meters
 
 CPU shows eight columns of six pads, each column the busiest of four threads —
@@ -135,7 +160,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 260 tests, about seven seconds
+tests/run-tests             # 313 tests, about eight seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

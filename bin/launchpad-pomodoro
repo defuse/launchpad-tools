@@ -27,6 +27,24 @@ blue until an hour is left and then counts itself down: yellow blinking slowly
 from 23:00, orange at the pomodoro cadence from 23:30, red at twice that from
 23:40, rapid red from 23:50, and a panic strobe for the last five minutes.
 
+The machine tab, third from the right, is read-only except its bottom row:
+
+  row 7   day bar again
+  row 6   RAID members, one pad per physical DISK -- green in sync, amber
+          rebuilding or in a degraded array, strobing red failed
+  row 5   filesystems: /, /home, Data-1, Fast-1. Green over 100GB free,
+          yellow under, red under 30GB, strobing if it is not mounted at all
+  row 3   temperatures: CPU, GPU, NVMe, with thresholds per part
+  row 1   output to game_stereo | output to the headset (and its mic) | gap |
+          EasyEffects on/off | gap | previous | play/pause | next
+          Every one of these shows the state the system is actually in, so
+          changing the output or the effects anywhere else moves the pads.
+  rows 4, 2   reserved, drawn dark
+
+Everything on that tab is sampled by a background thread and drawn from a
+snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
+takes a quarter of a second and a frame is 50ms.
+
 A pomodoro row, left to right, is its own progress bar:
 
   idle        leftmost pad WHITE, rest dark. Press it to start.
@@ -68,7 +86,7 @@ A pomodoro row, left to right, is its own progress bar:
 The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """
-import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum
+import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum, re, glob
 from typing import Callable, NamedTuple
 
 # ---- hardware -------------------------------------------------------------
@@ -99,8 +117,8 @@ HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
 # Tab column -> mode. Columns 3-5 are deliberately empty, and column 7 is the
 # reset pad, so modes are addressed by the column they sit on rather than by
 # a running index.
-M_POMO, M_HAB, M_HAB2, M_SYS, M_NET = 0, 1, 2, 5, 6
-TABS = (M_POMO, M_HAB, M_HAB2, M_SYS, M_NET)
+M_POMO, M_HAB, M_HAB2, M_MACH, M_SYS, M_NET = 0, 1, 2, 4, 5, 6
+TABS = (M_POMO, M_HAB, M_HAB2, M_MACH, M_SYS, M_NET)
 HAB_MODES = (M_HAB, M_HAB2)          # each keeps its own independent set
 NET_IFACE = None                     # auto-detected: the default-route interface
 
@@ -274,7 +292,67 @@ WEEK = Period('week', PURPLE, full=PINK, slices=7, step=86400,
 
 # Which bar a tab carries on BAR_ROW. The pomodoro tab and the daily habit tab
 # show the same day, drawn by the same code from the same Period.
-BARS = {M_POMO: DAY, M_HAB: DAY, M_HAB2: WEEK}
+BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK}
+
+
+# ---- machine and audio ----------------------------------------------------
+DISK_ROW, FS_ROW, TEMP_ROW, CTRL_ROW = 2, 3, 5, 7
+MACH_BLANK = [4, 6]                        # reserved, drawn dark
+
+
+class Sensor(NamedTuple):
+    """A temperature, and where it stops being fine. Thresholds are per part:
+    70C is a warm CPU and a cooked NVMe."""
+    name:  str
+    warm:  int                             # yellow from here
+    hot:   int                             # red from here
+    panic: int                             # flashing red from here
+    hwmon: str                             # /sys/class/hwmon name to look for
+    label: str                             # which tempN_label under it
+
+
+SENSORS = (
+    Sensor('cpu',  70, 85,  95, 'k10temp', 'Tctl'),
+    Sensor('gpu',  65, 80,  87, '',        ''),        # nvidia-smi, not hwmon
+    Sensor('nvme', 55, 70,  80, 'nvme',    'Composite'),
+)
+
+
+class Mount(NamedTuple):
+    """A filesystem worth watching, and how empty is too empty."""
+    name: str
+    path: str
+
+
+MOUNTS = (Mount('root',   '/'),
+          Mount('home',   os.path.expanduser('~')),
+          Mount('data',   os.path.expanduser('~/Data-1')),
+          Mount('fast',   os.path.expanduser('~/Fast-1')))
+FS_LOW, FS_CRIT = 100, 30                  # GB free: yellow under, red under
+
+# Audio devices are matched on a fragment of the PipeWire node name rather than
+# the whole thing: the headset's name carries its USB path, which changes when
+# it moves port.
+GAME_SINK = 'game_stereo'
+HEADSET   = 'AT_ATH-M50xSTS'               # sink AND mic; one button picks both
+SPOTIFY   = 'org.mpris.MediaPlayer2.spotify'
+
+
+class Button(NamedTuple):
+    """One pad on the control row: what it shows and what it does."""
+    kind: str                              # sink | effects | media
+    arg:  str
+
+
+# Left to right, one per pad. None is a deliberate gap: the outputs, the
+# effects toggle and the transport are three different jobs and a stray press
+# should not fire the wrong one.
+CONTROLS = (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
+            Button('effects', ''), None,
+            Button('media', 'Previous'), Button('media', 'PlayPause'),
+            Button('media', 'Next'))
+SELECTED = BLUE                            # the output you are listening on
+DISK_OK, DISK_SYNC, DISK_FAIL = GREEN, ORANGE, RED
 
 
 class Widget(enum.Enum):
@@ -291,6 +369,11 @@ class Widget(enum.Enum):
     CPU    = 'cpu'                     # read-only meters
     MEM    = 'mem'
     NET    = 'net'
+    DISK   = 'disk'
+    FS     = 'fs'
+    TEMP   = 'temp'
+    BLANK  = 'blank'                   # claimed, deliberately dark
+    CONTROL= 'control'
 
 
 # The layout, stated once. press() dispatches on it and render() draws it, so a
@@ -299,6 +382,9 @@ TAB_ROWS = {
     M_POMO: {Widget.TIMER: TIMER_ROWS, Widget.TOGGLE: TOGGLE_ROWS},
     M_HAB:  {Widget.HABIT: HAB_ROWS},
     M_HAB2: {Widget.HABIT: HAB_ROWS},
+    M_MACH: {Widget.DISK: [DISK_ROW], Widget.FS: [FS_ROW],
+             Widget.TEMP: [TEMP_ROW], Widget.CONTROL: [CTRL_ROW],
+             Widget.BLANK: MACH_BLANK},
     M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
     M_NET:  {Widget.NET: METER_ROWS},
 }
@@ -334,6 +420,205 @@ def _check_layout():
 _check_layout()
 
 
+def sh(*cmd, timeout=4):
+    """Run a command and return its stdout, or '' if anything at all goes
+    wrong. Only ever called from the poller thread."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout).stdout
+    except Exception:
+        return ''
+
+
+def spawn(*cmd):
+    """Fire and forget. A press must never wait on pactl or dbus: the thread
+    that reads the pads is the thread that draws them."""
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f'{cmd[0]}: {e!r}', flush=True)
+
+
+def match(fragment, names):
+    """The first device whose node name contains `fragment`, or ''.
+
+    Devices are matched on a fragment because a USB name carries the port it
+    is plugged into, and moving the headset to another socket renames it.
+    """
+    return next((n for n in names if fragment in n), '')
+
+
+DISK_RANK = {'ok': 0, 'sync': 1, 'fail': 2}
+
+
+def parse_mdstat(text):
+    """((disk, state), ...) from /proc/mdstat, worst state per disk.
+
+    Keyed by the whole disk rather than the partition: three arrays can live
+    on the same pair of drives, and it is the drive that dies. A disk that has
+    vanished entirely cannot be listed -- mdstat only names what is still
+    there -- but its array reads as degraded, so the surviving half goes amber
+    and the row still says something is wrong.
+    """
+    out = {}
+    for block in re.split(r'\n(?=\S)', text):
+        head = block.split('\n')[0]
+        if not re.match(r'md\w+\s*:', head):
+            continue
+        status = re.search(r'\[([U_]+)\]', block)
+        degraded = bool(status and '_' in status.group(1))
+        busy = bool(re.search(r'\b(resync|recovery|reshape|check)\b', block))
+        for member, flags in re.findall(r'(\w+?)\[\d+\](\([A-Z]\))?', head):
+            disk = re.sub(r'p?\d+$', '', member)
+            if flags in ('(F)', '(W)'):
+                state = 'fail'
+            elif degraded or busy or flags == '(S)':
+                state = 'sync'
+            else:
+                state = 'ok'
+            if DISK_RANK[state] >= DISK_RANK.get(out.get(disk, 'ok'), 0):
+                out[disk] = state
+    return tuple(sorted(out.items()))
+
+
+def free_gb(path):
+    """Gigabytes free on the filesystem holding `path`, or None if it is not
+    there at all -- which for these four means something is unmounted."""
+    try:
+        st = os.statvfs(path)
+        return st.f_bavail * st.f_frsize / 1e9
+    except Exception:
+        return None
+
+
+def hwmon_temp(name, label):
+    """Degrees from the hwmon device called `name`, channel `label`.
+
+    Found by name, not by number: hwmon0 is the NVMe today and could be the
+    wifi card after the next reboot.
+    """
+    for d in sorted(glob.glob('/sys/class/hwmon/hwmon*')):
+        try:
+            if open(os.path.join(d, 'name')).read().strip() != name:
+                continue
+            for lf in sorted(glob.glob(os.path.join(d, 'temp*_label'))):
+                if open(lf).read().strip() == label:
+                    return int(open(lf[:-6] + '_input').read()) / 1000.0
+        except Exception:
+            continue
+    return None
+
+
+def gpu_temp():
+    out = sh('nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader')
+    try:
+        return float(out.strip().splitlines()[0])
+    except Exception:
+        return None
+
+
+class Snapshot(NamedTuple):
+    """Everything the machine tab draws, as of the last time it was read."""
+    disks:   tuple = ()                # ((sda, ok|sync|fail), ...)
+    mounts:  tuple = ()                # ((Mount, GB free or None), ...)
+    temps:   tuple = ()                # ((Sensor, degrees or None), ...)
+    sinks:   tuple = ()                # node names currently available
+    sources: tuple = ()
+    sink:    str = ''                  # the default sink, however it got set
+    running: bool = False              # EasyEffects is up at all
+    effects: bool = False              # ...and not bypassed
+    playing: bool = False              # Spotify
+
+
+class Machine:
+    """The machine tab's data, sampled in the background.
+
+    Every reading here costs a syscall at best and a subprocess at worst --
+    `easyeffects -b 3` alone is a quarter of a second -- and the board is
+    redrawn twenty times a second. So nothing is read during a frame: this
+    thread refreshes a snapshot on its own cadence and render() draws whatever
+    it last saw. A reading a few seconds stale is fine; a stalled board is not.
+    """
+    AUDIO, EFFECTS, TEMPS, DISKS = 1.0, 5.0, 5.0, 30.0
+
+    def __init__(self):
+        self.snap = Snapshot()
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        due = {}
+        jobs = (('audio', self.AUDIO, self.read_audio),
+                ('effects', self.EFFECTS, self.read_effects),
+                ('temps', self.TEMPS, self.read_temps),
+                ('disks', self.DISKS, self.read_disks))
+        while True:
+            now = time.time()
+            for key, every, read in jobs:
+                if now - due.get(key, 0.0) >= every:
+                    due[key] = now
+                    try:
+                        read()
+                    except Exception as e:
+                        print(f'machine {key}: {e!r}', flush=True)
+            time.sleep(0.25)
+
+    def assume(self, **kw):
+        """Show a change straight away; the next poll confirms or corrects it.
+        A button that waits a second to light up feels broken."""
+        self.snap = self.snap._replace(**kw)
+
+    # ---- readers ---------------------------------------------------------
+    def read_audio(self):
+        def names(kind):
+            return tuple(l.split('\t')[1] for l in sh('pactl', 'list', 'short', kind).splitlines()
+                         if '\t' in l and not l.split('\t')[1].endswith('.monitor'))
+        self.assume(sinks=names('sinks'), sources=names('sources'),
+                    sink=sh('pactl', 'get-default-sink').strip(),
+                    playing='Playing' in sh(
+                        'gdbus', 'call', '--session', '--dest', SPOTIFY,
+                        '--object-path', '/org/mpris/MediaPlayer2', '--method',
+                        'org.freedesktop.DBus.Properties.Get',
+                        'org.mpris.MediaPlayer2.Player', 'PlaybackStatus'))
+
+    def read_effects(self):
+        # Only ask EasyEffects once it is known to be up: the query is a full
+        # application start, and on a GApplication it would launch the thing
+        # it was meant to be reporting on.
+        running = bool(sh('pgrep', '-x', 'easyeffects').strip())
+        lines = [l.strip() for l in sh('easyeffects', '-b', '3').splitlines() if l.strip()]
+        self.assume(running=running,
+                    effects=running and bool(lines) and lines[-1] == '2')
+
+    def read_temps(self):
+        readings = []
+        for s in SENSORS:
+            readings.append((s, gpu_temp() if s.name == 'gpu'
+                             else hwmon_temp(s.hwmon, s.label)))
+        self.assume(temps=tuple(readings))
+
+    def read_disks(self):
+        try:
+            mdstat = open('/proc/mdstat').read()
+        except Exception:
+            mdstat = ''
+        self.assume(disks=parse_mdstat(mdstat),
+                    mounts=tuple((m, free_gb(m.path)) for m in MOUNTS))
+
+    # ---- the one action that is not a single command ---------------------
+    def toggle_effects(self):
+        """White to green turns processing on however it was off: a bypassed
+        EasyEffects is unbypassed, a stopped one is started."""
+        if self.snap.effects:
+            spawn('easyeffects', '-b', '1')            # bypass on = effects off
+        elif self.snap.running:
+            spawn('easyeffects', '-b', '2')
+        else:
+            spawn('easyeffects', '--gapplication-service')
+        self.assume(effects=not self.snap.effects)
+
+
 def ding(name):
     """Fire and forget -- never wait on audio from the input loop."""
     f = os.path.join(SOUND_DIR, name)
@@ -366,6 +651,7 @@ class Board:
         self._popup_mode = M_HAB               # which table the window is showing
         self._editing = None                   # (r,c) while the edit window is up
         self._cpu_prev = None
+        self.machine = Machine()
         self._dirty = False
         self._lock = threading.Lock()
         self.load()
@@ -374,6 +660,7 @@ class Board:
         # 2.4 SECONDS, which showed up as pads lighting half a second after the
         # press. A background writer decouples the two.
         threading.Thread(target=self._writer, daemon=True).start()
+        self.machine.start()
         self._start_popup()
 
     def _start_popup(self):
@@ -568,6 +855,8 @@ class Board:
         bar = BARS.get(self.mode)
         if bar:
             self.render_bar(bar)
+        if self.mode == M_MACH:
+            return self.render_machine()
         if self.mode == M_SYS:
             return self.render_sys()
         if self.mode == M_NET:
@@ -605,6 +894,112 @@ class Board:
             if c >= lit:                self.set(p, OFF)
             elif stage and stage.off:   self.flash(p, colour, stage.on, stage.off)
             else:                       self.set(p, colour)
+
+    def render_machine(self):
+        """Disks, filesystems, temperatures and the audio controls."""
+        snap = self.machine.snap
+        self.render_disks(snap)
+        self.render_filesystems(snap)
+        self.render_temps(snap)
+        self.render_controls(snap)
+        for r in MACH_BLANK:                   # reserved, and drawn dark so a
+            for c in range(CELLS):             # tab switch cannot leave the
+                self.set(pad(r, c), OFF)       # previous tab's colours behind
+
+    def alarm(self, p, colour=RED):
+        """The strobe kept for things that are actually wrong."""
+        self.flash(p, colour, 2 * TICK, 2 * TICK)
+
+    def render_disks(self, snap):
+        """One pad per physical disk: green in sync, amber rebuilding or in a
+        degraded array, strobing red failed."""
+        for c in range(CELLS):
+            p = pad(DISK_ROW, c)
+            if c >= len(snap.disks):
+                self.set(p, OFF)
+            elif snap.disks[c][1] == 'fail':
+                self.alarm(p, DISK_FAIL)
+            else:
+                self.set(p, DISK_SYNC if snap.disks[c][1] == 'sync' else DISK_OK)
+
+    def render_filesystems(self, snap):
+        """One pad per filesystem, by how much room is left on it. A mount that
+        cannot be read at all strobes: these four are always mounted, so a
+        missing one is news."""
+        for c in range(CELLS):
+            p = pad(FS_ROW, c)
+            if c >= len(snap.mounts):
+                self.set(p, OFF)
+                continue
+            free = snap.mounts[c][1]
+            if free is None:        self.alarm(p)
+            elif free < FS_CRIT:    self.set(p, RED)
+            elif free < FS_LOW:     self.set(p, YELLOW)
+            else:                   self.set(p, GREEN)
+
+    def render_temps(self, snap):
+        """CPU, GPU, NVMe. Thresholds are per part -- 70C is a warm CPU and a
+        cooked NVMe -- so the colours mean the same thing across the row."""
+        for c in range(CELLS):
+            p = pad(TEMP_ROW, c)
+            if c >= len(snap.temps):
+                self.set(p, OFF)
+                continue
+            sensor, t = snap.temps[c]
+            if t is None:            self.set(p, OFF)      # nothing to read
+            elif t >= sensor.panic:  self.alarm(p)
+            elif t >= sensor.hot:    self.set(p, RED)
+            elif t >= sensor.warm:   self.set(p, YELLOW)
+            else:                    self.set(p, GREEN)
+
+    def render_controls(self, snap):
+        """Output, effects and transport. Every one of these shows the state
+        the system is actually in, not the last thing this board asked for:
+        change the output in the tray applet and the pads follow.
+        """
+        for c in range(CELLS):
+            p = pad(CTRL_ROW, c)
+            b = CONTROLS[c] if c < len(CONTROLS) else None
+            if b is None:
+                self.set(p, OFF)                           # deliberate gap
+            elif b.kind == 'sink':
+                name = match(b.arg, snap.sinks)
+                if not name:   self.set(p, OFF)            # unplugged, or gone
+                else:          self.set(p, SELECTED if name == snap.sink else WHITE)
+            elif b.kind == 'effects':
+                self.set(p, GREEN if snap.effects else WHITE)
+            else:
+                self.set(p, GREEN if b.arg == 'PlayPause' and snap.playing else WHITE)
+
+    def control_press(self, col):
+        """Act on the control row. Every action is fired and forgotten, and the
+        snapshot is updated optimistically -- a button that takes a poll to
+        light up feels broken -- with the next read confirming or correcting."""
+        b = CONTROLS[col] if col < len(CONTROLS) else None
+        snap = self.machine.snap
+        if b is None:
+            return
+        if b.kind == 'sink':
+            name = match(b.arg, snap.sinks)
+            if not name:
+                return                                     # nothing to switch to
+            spawn('pactl', 'set-default-sink', name)
+            if b.arg == HEADSET:
+                # the headset is a sink and a microphone, and picking it means
+                # picking both -- otherwise you switch to it and still record
+                # off whatever was selected before
+                mic = match(HEADSET, snap.sources)
+                if mic:
+                    spawn('pactl', 'set-default-source', mic)
+            self.machine.assume(sink=name)
+        elif b.kind == 'effects':
+            self.machine.toggle_effects()
+        else:
+            spawn('gdbus', 'call', '--session', '--dest', SPOTIFY,
+                  '--object-path', '/org/mpris/MediaPlayer2',
+                  '--method', f'org.mpris.MediaPlayer2.Player.{b.arg}')
+            if b.arg == 'PlayPause':
+                self.machine.assume(playing=not snap.playing)
 
     def render_timers(self):
         """Every timer row on the pomodoro tab, each its own progress bar."""
@@ -863,6 +1258,8 @@ class Board:
             self.select_habit(lr, lc)
         elif widget is Widget.TIMER:
             self.pomo_press(lr, lc)
+        elif widget is Widget.CONTROL:
+            self.control_press(lc)
         elif widget is Widget.TOGGLE:
             self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
             self.save()
