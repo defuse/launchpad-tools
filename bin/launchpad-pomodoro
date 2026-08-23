@@ -326,8 +326,8 @@ BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK}
 
 
 # ---- machine and audio ----------------------------------------------------
-DISK_ROW, FS_ROW, TEMP_ROW, CTRL_ROW = 2, 3, 5, 7
-MACH_BLANK = [4, 6]                        # reserved, drawn dark
+DISK_ROW, FS_ROW, DRIVE_TEMP_ROW, TEMP_ROW, CTRL_ROW = 2, 3, 4, 5, 7
+MACH_BLANK = [6]                           # reserved, drawn dark
 
 
 class Sensor(NamedTuple):
@@ -350,7 +350,15 @@ SENSORS = (
     Sensor('cpu',  70, 85,  95, 'k10temp', 'Tctl'),
     Sensor('gpu',  65, 80,  87, '',        ''),        # nvidia-smi, not hwmon
     Sensor('nvme', 55, 70,  80, 'nvme',    'Composite'),
+    # the second chiplet: worth its own pad only because a gap between it and
+    # Tctl is the thing that says one is working harder than the other
+    Sensor('ccd2', 70, 85,  95, 'k10temp', 'Tccd2'),
 )
+
+# Drives, by whether they spin. A platter drive is unhappy well before an SSD
+# notices: 45C is warm for one and unremarkable for the other.
+DRIVE_LIMITS = {True:  (45, 50, 55),       # spinning
+                False: (55, 65, 70)}       # solid state
 
 
 class Mount(NamedTuple):
@@ -483,7 +491,8 @@ TAB_ROWS = {
     M_HAB:  {Widget.HABIT: HAB_ROWS},
     M_HAB2: {Widget.HABIT: HAB_ROWS},
     M_MACH: {Widget.DISK: [DISK_ROW], Widget.FS: [FS_ROW],
-             Widget.TEMP: [TEMP_ROW], Widget.CONTROL: list(CONTROLS),
+             Widget.TEMP: [TEMP_ROW, DRIVE_TEMP_ROW],
+             Widget.CONTROL: list(CONTROLS),
              Widget.BLANK: MACH_BLANK},
     M_SPEC: {Widget.SPECTRUM: SPEC_ROWS},
     M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
@@ -622,6 +631,27 @@ def channel_volumes(sink):
                  re.findall(r'aux\d+:\s+(\d+)', sh('pactl', 'get-sink-volume', sink)))
 
 
+def drive_temps():
+    """((disk, celsius, spinning), ...) for every SATA drive the kernel reports.
+
+    Comes from the drivetemp module; without it loaded the row is simply dark.
+    smartctl would need root for every reading, which a background poller in a
+    user service cannot have.
+    """
+    out = {}
+    for d in sorted(glob.glob('/sys/class/hwmon/hwmon*')):
+        try:
+            if open(os.path.join(d, 'name')).read().strip() != 'drivetemp':
+                continue
+            disk = sorted(os.listdir(os.path.join(d, 'device', 'block')))[0]
+            spins = open(f'/sys/block/{disk}/queue/rotational').read().strip() == '1'
+            out[disk] = (int(open(os.path.join(d, 'temp1_input')).read()) / 1000.0,
+                         spins)
+        except Exception:
+            continue
+    return tuple((k, v[0], v[1]) for k, v in sorted(out.items()))
+
+
 def centred(n):
     """Column the first of `n` indicators sits at, centred across the row.
 
@@ -671,6 +701,7 @@ class Snapshot(NamedTuple):
     disks:   tuple = ()                # ((sda, ok|sync|fail), ...)
     mounts:  tuple = ()                # ((Mount, GB free or None), ...)
     temps:   tuple = ()                # ((Sensor, degrees or None), ...)
+    drives:  tuple = ()                # ((disk, degrees, spinning), ...)
     sinks:   tuple = ()                # node names currently available
     sources: tuple = ()
     sink:    str = ''                  # the default sink, however it got set
@@ -841,7 +872,7 @@ class Machine:
         for s in SENSORS:
             readings.append((s, gpu_temp() if s.name == 'gpu'
                              else hwmon_temp(s.hwmon, s.label)))
-        self.assume(temps=tuple(readings))
+        self.assume(temps=tuple(readings), drives=drive_temps())
 
     def read_disks(self):
         try:
@@ -1343,6 +1374,7 @@ class Board:
         snap = self.machine.snap
         self.render_disks(snap)
         self.render_filesystems(snap)
+        self.render_drive_temps(snap)
         self.render_temps(snap)
         self.render_controls(snap)
         for r in MACH_BLANK:                   # reserved, and drawn dark so a
@@ -1384,20 +1416,47 @@ class Board:
             elif free < FS_LOW:     self.set(p, YELLOW)
             else:                   self.set(p, GREEN)
 
+    def paint_temp(self, p, t, limits):
+        """One temperature pad, against its own three thresholds."""
+        warm, hot, panic = limits
+        if t is None:     self.set(p, OFF)                 # nothing to read
+        elif t >= panic:  self.alarm(p)
+        elif t >= hot:    self.set(p, RED)
+        elif t >= warm:   self.set(p, YELLOW)
+        else:             self.set(p, TEMP_OK)
+
     def render_temps(self, snap):
-        """CPU, GPU, NVMe. Thresholds are per part -- 70C is a warm CPU and a
-        cooked NVMe -- so the colours mean the same thing across the row."""
+        """CPU, GPU, NVMe and the second chiplet, centred. Thresholds are per
+        part -- 70C is a warm CPU and a cooked NVMe -- so the colours mean the
+        same thing across the row."""
+        first = centred(len(snap.temps))
         for c in range(CELLS):
             p = pad(TEMP_ROW, c)
-            if c >= len(snap.temps):
+            i = c - first
+            if not 0 <= i < len(snap.temps):
                 self.set(p, OFF)
                 continue
-            sensor, t = snap.temps[c]
-            if t is None:            self.set(p, OFF)      # nothing to read
-            elif t >= sensor.panic:  self.alarm(p)
-            elif t >= sensor.hot:    self.set(p, RED)
-            elif t >= sensor.warm:   self.set(p, YELLOW)
-            else:                    self.set(p, TEMP_OK)
+            sensor, t = snap.temps[i]
+            self.paint_temp(p, t, (sensor.warm, sensor.hot, sensor.panic))
+
+    def render_drive_temps(self, snap):
+        """One pad per drive, in the same column as its health pad above: one
+        column is one drive, its state over its temperature.
+
+        Ordered by the health row rather than by what drivetemp happens to
+        report, so a drive missing from either row cannot slide the other
+        along and leave every column naming the wrong disk.
+        """
+        first = centred(len(snap.disks))
+        temps = {name: (t, spins) for name, t, spins in snap.drives}
+        for c in range(CELLS):
+            p = pad(DRIVE_TEMP_ROW, c)
+            i = c - first
+            if not 0 <= i < len(snap.disks):
+                self.set(p, OFF)
+                continue
+            t, spins = temps.get(snap.disks[i][0], (None, False))
+            self.paint_temp(p, t, DRIVE_LIMITS[spins])
 
     def render_controls(self, snap):
         """Output, sub, effects and transport, across their two rows. Every one

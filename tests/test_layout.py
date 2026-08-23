@@ -27,7 +27,7 @@ def test_the_pomodoro_tab_shows_the_same_day_as_the_daily_habit_tab(mod):
     ('M_MACH', 'FS_ROW',   'FS'),
     ('M_MACH', 'TEMP_ROW', 'TEMP'),
     ('M_MACH', 'CTRL_ROW', 'CONTROL'),
-    ('M_MACH', 4, 'BLANK'),
+    ('M_MACH', 'DRIVE_TEMP_ROW', 'TEMP'),
     ('M_MACH', 6, 'BLANK'),
     ('M_POMO', 'BAR_ROW', 'BAR'),
     ('M_POMO', 2, 'TIMER'),

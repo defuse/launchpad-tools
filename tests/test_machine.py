@@ -170,8 +170,8 @@ def test_the_four_filesystems_are_the_real_ones(mod):
 def test_thresholds_are_per_part(mod):
     """70C is a warm CPU and a cooked NVMe: one threshold for the row would
     make the colours mean different things in different columns."""
-    cpu, gpu, nvme = mod.SENSORS
-    assert (cpu.name, gpu.name, nvme.name) == ('cpu', 'gpu', 'nvme')
+    cpu, gpu, nvme, ccd2 = mod.SENSORS
+    assert (cpu.name, gpu.name, nvme.name, ccd2.name) == ('cpu', 'gpu', 'nvme', 'ccd2')
     assert nvme.warm < cpu.warm and nvme.panic < cpu.panic
     for s in mod.SENSORS:
         assert s.warm < s.hot < s.panic
@@ -182,7 +182,8 @@ def test_thresholds_are_per_part(mod):
 ])
 def test_cpu_temperature_colours(mach, mod, temp, colour):
     snap = mod.Snapshot(temps=((mod.SENSORS[0], temp),))
-    assert show(mach, mod, snap, mod.TEMP_ROW)[0] == getattr(mod, colour)
+    show(mach, mod, snap, mod.TEMP_ROW)
+    assert middle(mach, mod, mod.TEMP_ROW, 1) == [getattr(mod, colour)]
 
 
 def test_a_normal_temperature_is_a_colour_the_palette_does_not_have(mach, mod):
@@ -193,7 +194,8 @@ def test_a_normal_temperature_is_a_colour_the_palette_does_not_have(mach, mod):
     r, g, b = mod.TEMP_OK
     assert b > g > r, 'blue, and pale'
     snap = mod.Snapshot(temps=((mod.SENSORS[0], 40),))
-    assert show(mach, mod, snap, mod.TEMP_ROW)[0] == mod.TEMP_OK
+    show(mach, mod, snap, mod.TEMP_ROW)
+    assert middle(mach, mod, mod.TEMP_ROW, 1)[0] == mod.TEMP_OK
 
 
 def test_an_rgb_colour_goes_out_as_a_lighting_sysex(board, mod, out):
@@ -208,14 +210,81 @@ def test_a_palette_colour_still_goes_out_as_a_note(board, mod, out):
     assert [m.type for m in out.sent] == ['note_on']
 
 
+def test_the_fourth_sensor_makes_the_row_centreable(mod):
+    """Four across eight sits in the middle; three did not."""
+    assert [x.name for x in mod.SENSORS] == ['cpu', 'gpu', 'nvme', 'ccd2']
+    assert mod.centred(len(mod.SENSORS)) == 2
+
+
+def test_the_system_temperatures_are_centred(mach, mod):
+    snap = mod.Snapshot(temps=tuple((x, 40) for x in mod.SENSORS))
+    painted = show(mach, mod, snap, mod.TEMP_ROW)
+    assert painted[:2] == [mod.OFF] * 2 and painted[6:] == [mod.OFF] * 2
+    assert painted[2:6] == [mod.TEMP_OK] * 4
+
+
+# ---- drive temperatures --------------------------------------------------
+DRIVES = (('sda', 31.0, False), ('sdb', 36.0, True), ('sdc', 36.0, True),
+          ('sdd', 33.0, False), ('sde', 37.0, False), ('sdf', 35.0, False))
+HEALTH = tuple((name, 'ok') for name, _, _ in DRIVES)
+
+
+def test_a_platter_drive_is_warm_where_an_ssd_is_not(mod):
+    """45C is unremarkable for an SSD and the start of trouble for a disk that
+    spins, so the thresholds cannot be shared."""
+    hdd, ssd = mod.DRIVE_LIMITS[True], mod.DRIVE_LIMITS[False]
+    assert hdd[0] < ssd[0] and hdd[2] < ssd[2]
+
+
+@pytest.mark.parametrize('temp,spins,colour', [
+    (31, False, 'TEMP_OK'), (54, False, 'TEMP_OK'), (55, False, 'YELLOW'),
+    (65, False, 'RED'),
+    (36, True, 'TEMP_OK'), (44, True, 'TEMP_OK'), (45, True, 'YELLOW'),
+    (50, True, 'RED'),
+])
+def test_drive_temperature_colours(mach, mod, temp, spins, colour):
+    snap = mod.Snapshot(disks=(('sda', 'ok'),), drives=(('sda', temp, spins),))
+    show(mach, mod, snap, mod.DRIVE_TEMP_ROW)
+    assert middle(mach, mod, mod.DRIVE_TEMP_ROW, 1) == [getattr(mod, colour)]
+
+
+def test_each_drive_sits_under_its_own_health_pad(mach, mod):
+    """One column is one drive: state above, temperature below."""
+    snap = mod.Snapshot(disks=HEALTH, drives=DRIVES)
+    show(mach, mod, snap, mod.DISK_ROW)
+    health = row(mach, mod, mod.DISK_ROW)
+    temps = row(mach, mod, mod.DRIVE_TEMP_ROW)
+    lit = [c for c, v in enumerate(health) if v != mod.OFF]
+    assert lit == [c for c, v in enumerate(temps) if v != mod.OFF], \
+        'the two rows light the same columns'
+    assert lit == [1, 2, 3, 4, 5, 6], 'six drives, centred'
+
+
+def test_a_drive_with_no_sensor_leaves_its_column_dark_without_shifting_the_rest(mach, mod):
+    """drivetemp not loaded, or one drive not reporting: the columns must still
+    name the same disks as the row above."""
+    snap = mod.Snapshot(disks=HEALTH, drives=tuple(d for d in DRIVES if d[0] != 'sdc'))
+    show(mach, mod, snap, mod.DRIVE_TEMP_ROW)
+    temps = row(mach, mod, mod.DRIVE_TEMP_ROW)
+    assert temps[3] == mod.OFF, 'sdc is the third of six, at column 3'
+    assert temps[4] != mod.OFF, 'and sdd still holds its own column'
+
+
+def test_no_drivetemp_module_means_a_dark_row_not_an_error(mach, mod):
+    snap = mod.Snapshot(disks=HEALTH, drives=())
+    assert show(mach, mod, snap, mod.DRIVE_TEMP_ROW) == [mod.OFF] * mod.CELLS
+
+
 def test_an_abnormal_temperature_strobes(mach, mod):
     snap = mod.Snapshot(temps=((mod.SENSORS[0], 99),))
-    assert show(mach, mod, snap, mod.TEMP_ROW)[0] in (mod.RED, mod.OFF)
+    show(mach, mod, snap, mod.TEMP_ROW)
+    assert middle(mach, mod, mod.TEMP_ROW, 1)[0] in (mod.RED, mod.OFF)
 
 
 def test_a_sensor_that_cannot_be_read_is_dark_not_alarming(mach, mod):
     snap = mod.Snapshot(temps=((mod.SENSORS[1], None),))
-    assert show(mach, mod, snap, mod.TEMP_ROW)[0] == mod.OFF
+    show(mach, mod, snap, mod.TEMP_ROW)
+    assert middle(mach, mod, mod.TEMP_ROW, 1)[0] == mod.OFF
 
 
 # ---- the control row -----------------------------------------------------

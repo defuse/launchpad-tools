@@ -101,8 +101,8 @@ unstarted.
  1   B  B  B  ·  ·  ·  ·  ·     day bar
  2   ·  G  G  G  G  G  G  ·     disks — one pad per drive, centred
  3   ·  ·  Y  G  G  G  ·  ·     filesystems — / · home · Data-1 · Fast-1
- 4   ·  ·  ·  ·  ·  ·  ·  ·
- 5   b  b  b  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
+ 4   ·  b  b  b  b  b  b  ·     drive temperatures — same columns as row 2
+ 5   ·  ·  b  b  b  b  ·  ·     temperatures — CPU · GPU · NVMe · CCD2
  6   ·  ·  ·  ·  ·  ·  ·  ·
  7   B  W  ·  W  R  W  S  W     speakers · headset | sub · effects · prev play next
 ```
@@ -113,7 +113,13 @@ Everything above the bottom row is read-only:
 |---|---|
 | disks | green in sync, amber rebuilding or in a degraded array, strobing red failed |
 | filesystems | green with room to spare, yellow getting full, red nearly full |
+| drive temperatures | one per drive, in its own column below its health pad |
 | temperatures | pale blue normal, yellow warm, red hot, strobing red too hot |
+
+Rows 2 and 4 are the same six drives in the same order, so a column is one
+drive: its array state above, its temperature below. Drive temperatures need
+the `drivetemp` module (`modprobe drivetemp`); without it that row is dark,
+since `smartctl` would need root for every reading.
 
 A pad is a whole drive, not an array member, since several arrays can share a
 pair of drives and it is the drive that dies. A drive that has vanished entirely
@@ -283,7 +289,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 389 tests, about ten seconds
+tests/run-tests             # 403 tests, about eleven seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
@@ -307,7 +313,7 @@ of `bin/launchpad-pomodoro` — change them there and those tabs work elsewhere.
 | microphone | the source matching that same fragment; the headset pad sets both |
 | transport | Spotify, over MPRIS |
 | filesystems | `/`, `$HOME`, `~/Data-1`, `~/Fast-1`, with the yellow and red thresholds beside them |
-| temperatures | an AMD CPU (`k10temp`, `Tctl`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive — thresholds are per part |
+| temperatures | an AMD CPU (`k10temp`, `Tctl` and `Tccd2`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive, and SATA drives via `drivetemp` — thresholds are per part, and per drive type |
 | disks | whatever `/proc/mdstat` lists; no arrays means an empty row, not an error |
 | subwoofer | two channels of a multichannel interface (`TASCAM_SERIES_208i`, LINE OUT 3/4), fed by links something else maintains — the pad only sets those channels' volume |
 | effects | EasyEffects 8, using its own preset and autoload files under `~/.local/share/easyeffects` |
