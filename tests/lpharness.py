@@ -153,11 +153,16 @@ def new_board(mod, out=None):
     return b
 
 
-def load_popup():
-    """Exec habit-popup into a private module namespace (does not open Tk)."""
-    src = open(POPUP).read()
-    m = types.ModuleType('habit_popup_under_test')
-    m.__file__ = POPUP
-    m.__dict__['__name__'] = 'habit_popup_under_test'
-    exec(compile(src, POPUP, 'exec'), m.__dict__)
+def load_popup(name='habit-popup'):
+    """Exec one of the window programs into a private module namespace.
+
+    Only the top level runs -- the Tk window is built in Window()/Grid(), which
+    is not called -- so this reaches a window's constants and pure functions
+    from a test that has no display.
+    """
+    path = POPUP if name == 'habit-popup' else os.path.join(BIN, name)
+    m = types.ModuleType(name.replace('-', '_') + '_under_test')
+    m.__file__ = path
+    m.__dict__['__name__'] = m.__name__
+    exec(compile(open(path).read(), path, 'exec'), m.__dict__)
     return m

@@ -206,3 +206,44 @@ def test_pressing_the_bar_does_nothing(mod, out):
     b.release(mod.pad(mod.BAR_ROW, 3))
     assert b._editing is None
     assert b.habits == {}
+
+
+# ---- what each pad of a bar stands for, in words -------------------------
+
+def test_the_day_is_labelled_in_hours(mod):
+    assert mod.DAY.labels() == ['00–03', '03–06', '06–09', '09–12',
+                                '12–15', '15–18', '18–21', '21–00']
+
+
+def test_the_labels_come_from_the_step_not_from_a_list(mod):
+    """Halve the step and the row relabels itself. A written-out list would
+    have to be remembered separately, and would not be."""
+    twelve = mod.DAY._replace(slices=4, step=6 * 3600)
+    assert twelve.labels() == ['00–06', '06–12', '12–18', '18–00'] + ['18–00'] * 4
+
+
+def test_the_week_is_labelled_in_days(mod):
+    """Seven slices in an eight-pad row: the spare repeats the last, exactly
+    as the lighting does."""
+    assert mod.WEEK.labels() == ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri',
+                                 'Sat', 'Sat']
+
+
+def test_a_label_lines_up_with_the_slice_it_names(mod):
+    """The third label says 06-09, so at 07:00 three pads are lit and the
+    third is the one that just came on."""
+    lit, _ = mod.DAY.bar(at(2026, 8, 18, 7, 0))
+    assert lit == 3
+    assert mod.DAY.labels()[lit - 1] == '06–09'
+
+
+def test_every_colour_a_bar_can_take_has_a_hex(mod):
+    """The window is handed CSS for whatever the pads are showing, and a
+    colour missing from that table would come out as an unlit cell -- the
+    window quietly disagreeing with the board."""
+    for period in (mod.DAY, mod.WEEK):
+        wanted = {period.colour, period.full}
+        if period.flashes:
+            wanted |= {st.colour for st in mod.BAR_STAGES}
+        for colour in wanted:
+            assert colour in mod.PAD_HEX, f'{period.name} bar can be {colour}'

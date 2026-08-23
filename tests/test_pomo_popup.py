@@ -57,8 +57,10 @@ def load(win, names=NAMES, rows=None, show=True):
 
 
 def lines(box):
+    """Display lines the text takes. Tk's -displaylines counts the gaps
+    BETWEEN two indices, so a box holding four lines answers three."""
     n = box.count('1.0', 'end - 1c', 'displaylines')
-    return (n[0] if isinstance(n, tuple) else n) or 1
+    return int((n[0] if isinstance(n, tuple) else n) or 0) + 1
 
 
 def test_every_box_is_the_same_height(win):
@@ -72,6 +74,26 @@ def test_and_that_height_shows_the_longest_item_whole(win):
     need = max(lines(b) for b in win.entries.values())
     assert min(int(b.cget('height')) for b in win.entries.values()) >= need
     assert need > 1, 'the fixture has an item that has to wrap'
+
+
+def test_nothing_is_scrolled_out_of_any_box(win):
+    """The measurement above and the thing being measured share a function, so
+    ask Tk the other question instead: is any of the text out of view? A box
+    showing all it holds is scrolled to 0.0 and its view reaches 1.0."""
+    load(win)
+    for c, box in win.entries.items():
+        assert box.yview() == (0.0, 1.0), f'slot {c} is hiding some of its text'
+
+
+def test_nothing_is_scrolled_out_of_a_narrow_box(win):
+    """Narrow enough that the longest item takes another line than it did."""
+    win.root.geometry('1200x900')
+    load(win)
+    win.root.update()
+    win.fit_slots()
+    win.root.update()
+    for c, box in win.entries.items():
+        assert box.yview() == (0.0, 1.0), f'slot {c} is hiding some of its text'
 
 
 def test_it_wraps_at_words(win):
@@ -254,3 +276,60 @@ def test_clicking_the_header_still_presses(win, capsys):
     win.root.update()
     out = capsys.readouterr().out
     assert f'press\t{win.mod.TODO_ROW}\t3' in out
+
+
+# ---- a row can say what each of its pads stands for -----------------------
+
+BAR = [{'row': 1, 'name': 'time of day', 'state': 'bar',
+        'cells': ['#5a7bff'] * 3 + ['#191920'] * 5,
+        'labels': ['00–03', '03–06', '06–09', '09–12',
+                   '12–15', '15–18', '18–21', '21–00']}]
+
+
+def test_a_labelled_row_prints_its_labels_in_the_cells(win):
+    load(win, rows=BAR)
+    assert [c.cget('text') for c in win.row_caps[1]] == BAR[0]['labels']
+
+
+def test_a_label_sits_on_the_colour_the_pad_is_showing(win):
+    """It is a mirror: the cell is the pad's colour and the words are on it,
+    not beside it."""
+    load(win, rows=BAR)
+    for c in range(8):
+        assert win.row_caps[1][c].cget('bg') == BAR[0]['cells'][c]
+        assert win.row_pads[1][c].cget('bg') == BAR[0]['cells'][c]
+
+
+def test_the_ink_is_readable_on_whatever_the_cell_is(win):
+    """A bar cell is deep blue most of the day and yellow, orange or red in
+    the last hour. One fixed ink is unreadable on some of those."""
+    dark = dict(BAR[0], cells=['#191920'] * 8)
+    load(win, rows=[dark])
+    assert win.row_caps[1][0].cget('fg') == '#c9c9d4'
+    load(win, rows=[dict(BAR[0], cells=['#ffd21a'] * 8)])
+    assert win.row_caps[1][0].cget('fg') == '#0d0d11', 'dark ink on yellow'
+
+
+def test_an_unlabelled_cell_shows_nothing_at_all(win):
+    """Not even a gap: the label is painted in the cell's own colour."""
+    load(win, rows=ROWS_ONE)
+    cap = win.row_caps[2][0]
+    assert cap.cget('text') == ''
+    assert cap.cget('fg') == cap.cget('bg')
+
+
+def test_a_labelled_cell_is_still_the_pad(win, capsys):
+    """The words are a child of the cell, and a child eats the clicks its
+    parent was bound for unless it takes the same ones."""
+    load(win, rows=BAR)
+    capsys.readouterr()
+    win.row_caps[1][4].event_generate('<Button-1>', x=2, y=2)
+    win.root.update()
+    assert 'press\t1\t4' in capsys.readouterr().out
+
+
+def test_the_labels_survive_a_repaint(win):
+    load(win, rows=BAR)
+    win.handle('data\t' + json.dumps({'rows': BAR, 'todo': win.todo}))
+    win.root.update()
+    assert win.row_caps[1][7].cget('text') == '21–00'

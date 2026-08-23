@@ -607,7 +607,7 @@ def test_the_window_can_clear_the_list(mirror, mod):
 def test_the_row_labels_carry_the_length(mirror, mod):
     sent = [l for l in mirror._pomo_popup.sent() if l.startswith('data\t')]
     rows = json.loads(sent[-1].split('\t', 1)[1])['rows']
-    names = [r['name'] for r in rows]
+    names = [r['name'] for r in rows if r['row'] in mod.TIMER_ROWS]
     assert names[0] == 'timer 1 (24 min)'
     assert names[-1] == 'break (8 min)'
 
@@ -677,3 +677,51 @@ def hb_board(board, mod):
     board.habit_sets['1'] = {'2,0': {'name': 'a', 'colour': 3, 'state': 0}}
     board.habit_sets['2'] = {'2,0': {'name': 'b', 'colour': 3, 'state': 0}}
     return board
+
+
+# ---- the day bar is in the window too ------------------------------------
+
+def sent_rows(board):
+    sent = [l for l in board._pomo_popup.sent() if l.startswith('data\t')]
+    return json.loads(sent[-1].split('\t', 1)[1])['rows']
+
+
+def test_the_bar_is_the_first_row_of_the_window(mirror, mod):
+    """Where it is on the board: above the timers."""
+    rows = sent_rows(mirror)
+    assert rows[0]['row'] == mod.BAR_ROW
+    assert rows[0]['name'] == 'time of day'
+
+
+def test_the_bar_cells_are_the_ones_on_the_pads(mirror, mod):
+    mirror.render()
+    cells = sent_rows(mirror)[0]['cells']
+    lit = mirror.out.lit()
+    assert cells == [mod.PAD_HEX[lit[mod.pad(mod.BAR_ROW, c)]] for c in range(mod.CELLS)]
+
+
+def test_the_bar_row_says_what_each_pad_stands_for(mirror, mod):
+    assert sent_rows(mirror)[0]['labels'] == mod.DAY.labels()
+
+
+def test_only_the_bar_carries_labels(mirror, mod):
+    """A timer's pads are three minutes each and say so in the row's name;
+    labelling all thirty-two of them would be noise."""
+    assert all('labels' not in r for r in sent_rows(mirror)[1:])
+
+
+def test_the_bar_row_has_no_hint_state(mirror, mod):
+    """The hints are things you can do. There is nothing to do about the time
+    of day, so its state matches none of them."""
+    from lpharness import load_popup
+    assert sent_rows(mirror)[0]['state'] not in load_popup('pomo-popup').HINTS
+
+
+def test_a_click_on_a_bar_cell_does_nothing(mirror, mod, clock):
+    """The window sends the press the pad would send, and the pad has no
+    gesture -- so this is checking the two agree about that."""
+    before = dict(mirror.rows[ROW])
+    mirror.press(mod.pad(mod.BAR_ROW, 2))
+    mirror.release(mod.pad(mod.BAR_ROW, 2))
+    assert mirror.rows[ROW] == before
+    assert mirror.todo == mod.blank_todo()

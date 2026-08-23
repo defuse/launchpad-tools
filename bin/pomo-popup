@@ -97,6 +97,20 @@ def normalise(text):
     return re.sub(r'\s+', ' ', text).strip()
 
 
+def ink(bg):
+    """Dark or light text, whichever can be read on `bg`.
+
+    A bar cell is deep blue most of the day and yellow, orange or red in the
+    last hour, and unlit between blinks, so one fixed colour would be
+    unreadable on some of them.
+    """
+    try:
+        r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
+    except (ValueError, IndexError):
+        return WHITE
+    return '#0d0d11' if (r * 299 + g * 587 + b * 114) / 1000 > 140 else '#c9c9d4'
+
+
 def tint(w, bg):
     """Paint a slot and everything in it. The state colour is the whole cell,
     and the tree under it is two deep now that the grip lives in a header."""
@@ -147,6 +161,7 @@ class Window:
         outer.pack(expand=True)
         self.outer = outer
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
+        self.row_caps = {}                 # per cell: what that pad stands for
         self.row_lefts = {}
         self.slots, self.entries, self.heads = {}, {}, {}
         self.root.bind_all('<Escape>', lambda ev: (self.close(), 'break')[1])
@@ -188,6 +203,7 @@ class Window:
         for child in self.outer.winfo_children():
             child.destroy()
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
+        self.row_caps = {}                 # per cell: what that pad stands for
         self.row_lefts = {}
         self.slots, self.entries, self.heads = {}, {}, {}
 
@@ -208,17 +224,25 @@ class Window:
             # the pads share the todo list's columns, so pad c sits directly
             # above slot c and the window is a mirror rather than two rows that
             # happen to have eight of something
-            cells = []
+            cells, caps = [], []
             for c in range(COLS):
                 p = tk.Frame(self.outer, bg=CELL_BG, width=PAD_W, height=PAD_W,
                              highlightthickness=3, highlightbackground=BG)
                 p.grid(row=line, column=2 + c, padx=4, pady=4)
                 p.grid_propagate(False)
-                p.bind('<ButtonPress-1>',
-                       lambda ev, rr=info['row'], cc=c: say(f'press\t{rr}\t{cc}'))
-                p.bind('<ButtonRelease-1>',
-                       lambda ev, rr=info['row'], cc=c: say(f'release\t{rr}\t{cc}'))
+                # what the pad stands for, if the row says. A cell that carries
+                # no label is a plain pad and this label is empty and invisible
+                cap = tk.Label(p, text='', font=('DejaVu Sans', 13), bg=CELL_BG,
+                               fg=CELL_BG)
+                cap.place(relx=0.5, rely=0.5, anchor='center')
+                for w in (p, cap):
+                    w.bind('<ButtonPress-1>',
+                           lambda ev, rr=info['row'], cc=c: say(f'press\t{rr}\t{cc}'))
+                    w.bind('<ButtonRelease-1>',
+                           lambda ev, rr=info['row'], cc=c: say(f'release\t{rr}\t{cc}'))
                 cells.append(p)
+                caps.append(cap)
+            self.row_caps[info['row']] = caps
             self.row_pads[info['row']] = cells
             hint = tk.Label(self.outer, text='', font=('DejaVu Sans', 17),
                             fg=MUTED, bg=BG, anchor='w')
@@ -281,9 +305,18 @@ class Window:
         self._painting = True
         try:
             for info in self.rows:
+                labels = info.get('labels') or []
                 for c, colour in enumerate(info.get('cells', [])[:COLS]):
                     pad = self.row_pads[info['row']][c]
-                    pad.configure(bg=colour or CELL_BG)
+                    bg = colour or CELL_BG
+                    pad.configure(bg=bg)
+                    cap = self.row_caps[info['row']][c]
+                    text = labels[c] if c < len(labels) else ''
+                    # the ink is picked against the pad it sits on, so a label
+                    # stays readable through a bar's whole escalation -- deep
+                    # blue, then yellow, orange, red -- and through the dark
+                    # half of a blink
+                    cap.configure(text=text, bg=bg, fg=ink(bg) if text else bg)
                 left, right = HINTS.get(info.get('state', ''), (None, None))
                 self.row_lefts[info['row']].configure(text=left[0] if left else '',
                                                       fg=left[1] if left else MUTED)
@@ -338,6 +371,11 @@ class Window:
         the only honest answer -- the alternative is dividing characters by a
         guessed width and being wrong for every proportional font. Growing them
         all together keeps the row a row rather than a skyline.
+
+        -displaylines counts the display lines BETWEEN two indices, so a box
+        holding four of them answers three: it is the gaps that are counted,
+        not the lines. Hence the +1. Without it every wrapped item was one line
+        short and scrolled, and a single-line item was right by accident.
         """
         if self.root.state() == 'withdrawn':
             return                             # Tk cannot count what it is not drawing
@@ -346,10 +384,10 @@ class Window:
         for t in self.entries.values():
             try:
                 n = t.count('1.0', 'end - 1c', 'displaylines')
-                n = n[0] if isinstance(n, tuple) else int(n or 1)
+                n = int((n[0] if isinstance(n, tuple) else n) or 0) + 1
             except Exception:
                 n = 1
-            need = max(need, n or 1)
+            need = max(need, n)
         for t in self.entries.values():
             if int(t.cget('height')) != need:
                 t.configure(height=need)

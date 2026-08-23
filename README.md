@@ -101,6 +101,14 @@ blinking cell of a running timer blinks here in step with the board, and the red
 fill of a hold-to-abandon crawls across both at once. Each row is labelled with
 its length.
 
+The day bar is at the top, as `time of day`, with each pad printed with the
+three hours it stands for — `00–03` through `21–00`. It is read-only here as it
+is on the board; it is in the window so the row on the board can be read
+without being explained. The hours come from the same slices and step the bar is
+drawn from, so there is no second description of the row to keep in step, and
+the ink is picked against whatever colour the pad is showing so it stays legible
+through the last hour's yellow, orange and red.
+
 **Switching tabs switches the window.** Whatever was on screen closes and the
 new tab's window opens in its place — or nothing does, on a tab that has none.
 
@@ -351,7 +359,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 639 tests, about thirty seconds
+tests/run-tests             # 658 tests, about forty-five seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

@@ -169,7 +169,13 @@ MACHINE_POPUP = os.path.expanduser('~/.local/bin/machine-popup')
 POMO_POPUP = os.path.expanduser('~/.local/bin/pomo-popup')
 # What the pads are showing, in CSS, for the window that mirrors them
 PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
-           BLUE: '#5a7bff', TODO_DONE: '#a0feb4'}
+           BLUE: '#5a7bff', TODO_DONE: '#a0feb4',
+           # the bar's last hour: yellow at 23:00, orange at 23:30, red after.
+           # Purple and pink are the week filling and full, which no window
+           # shows today -- but a bar's colour missing from here comes out as
+           # an unlit cell, which is the window disagreeing with the board
+           YELLOW: '#ffd21a', ORANGE: '#ff8b1f', PURPLE: '#9d5cff',
+           PINK: '#ff6fae'}
 
 # ---- layout ---------------------------------------------------------------
 # Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
@@ -269,6 +275,11 @@ def _into_week(t):
     return ((t.tm_wday + 1) % 7) * 86400 + _into_day(t)
 
 
+# the week starts on Sunday, per _into_week; slice 0 of a daily-stepped bar is
+# that day
+DAY_NAMES = ('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+
+
 class Period(NamedTuple):
     """A repeating stretch of time, drawn as one row of pads.
 
@@ -303,6 +314,24 @@ class Period(NamedTuple):
         into = self.into(time.localtime(now if now is not None else time.time()))
         lit = int(into // self.step) + 1
         return (CELLS if lit >= self.slices else lit), self.length - into
+
+    def labels(self):
+        """What each pad of the row stands for, in words.
+
+        For the window, which has room to say it. Worked out from the same
+        slices and step the bar itself is drawn from, so there is no second
+        description of the row to keep in step with the first. Spare cells
+        repeat the last slice, exactly as the lighting does.
+        """
+        out = []
+        for c in range(CELLS):
+            i = min(c, self.slices - 1)
+            if self.step % 86400 == 0:
+                out.append(DAY_NAMES[i % 7])
+            else:
+                h, span = i * self.step // 3600, self.step // 3600
+                out.append(f'{h:02d}–{(h + span) % 24:02d}')
+        return out
 
     def stage(self, left):
         """How a full bar of this period looks with `left` seconds to run.
@@ -1262,18 +1291,25 @@ class Board:
         """Mirror the pomodoro tab into the window, if it is open."""
         if self._window != M_POMO:
             return
-        rows = []
-        for i, r in enumerate(TIMER_ROWS):
-            t = TIMERS[r]
+        def lit(r):
             # whatever is on the pads this instant, read back rather than
             # recomputed: the blinking cell blinks in the window in step with
             # the board, and the red fill of a hold-to-abandon crawls across
             # both at once, because there is only one thing deciding either
-            cells = [PAD_HEX.get(self.shown.get(pad(r, c), (0, OFF))[1], '#191920')
-                     for c in range(CELLS)]
+            return [PAD_HEX.get(self.shown.get(pad(r, c), (0, OFF))[1], '#191920')
+                    for c in range(CELLS)]
+
+        # the bar first, because that is where it is on the board. It is read
+        # only, and here it can say what each of its pads means -- which is the
+        # one thing the row itself cannot tell you
+        bar = BARS[M_POMO]
+        rows = [{'row': BAR_ROW, 'name': 'time of day', 'state': 'bar',
+                 'cells': lit(BAR_ROW), 'labels': bar.labels()}]
+        for i, r in enumerate(TIMER_ROWS):
+            t = TIMERS[r]
             name = 'break' if r == BREAK_ROW else f'timer {i + 1}'
             rows.append({'row': r, 'name': f'{name} ({t.length // 60} min)',
-                         'state': self.rows[r]['state'], 'cells': cells})
+                         'state': self.rows[r]['state'], 'cells': lit(r)})
         blob = json.dumps({'rows': rows, 'todo': self.todo,
                            'ack': self._todo_edit})
         if blob == self._pomo_sent:
