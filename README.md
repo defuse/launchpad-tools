@@ -154,10 +154,13 @@ EasyEffects included — and follows the output when you switch it. Each band ha
 its own hue rather than the meters' green-yellow-red, and a peak marker that
 hangs above the bar and falls back.
 
-Bands are log spaced from 40Hz to 12kHz, with a 3dB-per-band tilt: music
-carries most of its energy low down, so without one the right of the board
-barely moves. `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` are the knobs if it
-sits too high or too low for what you listen to.
+Bands are log spaced from 40Hz to 12kHz, with a 1.6dB-per-band tilt: music
+carries most of its energy low down — measured on this system the bass bands
+run 1.9dB per band above the treble — so without one the right of the board
+barely moves. Tilting slightly under the measured slope evens the row out while
+leaving bass visibly the loudest, which is what it is. `SPEC_FLOOR`,
+`SPEC_CEIL` and `SPEC_TILT` are the knobs if it sits too high or too low for
+what you listen to.
 
 The board is redrawn at 20fps everywhere else — a pomodoro cell changes every
 three minutes and a CPU column a few times a second — but audio does not move
