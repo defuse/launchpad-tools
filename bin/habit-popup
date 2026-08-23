@@ -45,8 +45,11 @@ NAME_OF = {i: n for i, n, _ in PALETTE}
 ROWS, COLS, HAB_ROW0 = 8, 8, 2
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 # What an empty cell is named when it is turned on by picking a colour for it.
-# It has to be a real name: the board drops any cell whose name is blank.
+# It has to be a real name: a cell with a blank one lights no pad.
 PLACEHOLDER = 'SET NAME HERE'
+# what a cell nobody has coloured is: the board's WHITE. A cell with this
+# colour and no name is a cell with nothing in it, and is not kept
+DEFAULT_COLOUR = 3
 YELLOW_B, RED_B = '#ffd21a', '#ff4444'
 # cell background carries the habit state; deliberately dim so the bright
 # name text stays legible on top of it
@@ -185,11 +188,17 @@ class Grid:
 
     # ---- helpers ----
     def key(self,r,c): return f'{r},{c}'
-    def get(self,r,c):  return self.habits.get(self.key(r,c), {'name':'','colour':3,'state':0})
+    def get(self,r,c):  return self.habits.get(self.key(r,c),
+                                               {'name':'','colour':DEFAULT_COLOUR,'state':0})
 
     def put(self,r,c,h):
-        if h.get('name'): self.habits[self.key(r,c)] = h
-        else:             self.habits.pop(self.key(r,c), None)
+        # A colour outlives the name: clearing the name to retype it leaves the
+        # cell its colour, and the board keeps the same record. Only a cell
+        # with neither goes away. See set_habit() in the daemon.
+        if h.get('name') or h.get('colour',DEFAULT_COLOUR) != DEFAULT_COLOUR:
+            self.habits[self.key(r,c)] = h
+        else:
+            self.habits.pop(self.key(r,c), None)
 
     def name_typed(self, r, c):
         """Live rename. Guarded because paint() writes the StringVars too."""
@@ -247,7 +256,7 @@ class Grid:
         g = tk.Toplevel(self.root)
         g.overrideredirect(True); g.attributes('-topmost', True)
         g.attributes('-alpha', 0.85)
-        col = BY_IDX.get(h.get('colour',3), '#e8e8e8')
+        col = BY_IDX.get(h.get('colour',DEFAULT_COLOUR), '#e8e8e8')
         tk.Label(g, text=h['name'], font=('DejaVu Sans',20,'bold'),
                  fg=col, bg='#000008', padx=18, pady=10,
                  highlightbackground=col, highlightthickness=3).pack()
@@ -288,11 +297,12 @@ class Grid:
     def emit(self, r, c):
         """Tell the board a cell's name/colour changed. Called on every edit --
         typing, colour pick, drag swap -- since there is no commit step."""
-        h = self.habits.get(self.key(r,c), {'name':'','colour':3,'state':0})
+        h = self.habits.get(self.key(r,c),
+                            {'name':'','colour':DEFAULT_COLOUR,'state':0})
         # the protocol is tab separated and newline terminated, so a pasted name
         # containing either would split into fields the board cannot parse
         name = re.sub(r'\s+', ' ', h.get('name','')).strip()
-        sys.stdout.write(f"set\t{r}\t{c}\t{name}\t{h.get('colour',3)}\n")
+        sys.stdout.write(f"set\t{r}\t{c}\t{name}\t{h.get('colour',DEFAULT_COLOUR)}\n")
         sys.stdout.flush()
 
     def pull_names(self):
@@ -318,7 +328,8 @@ class Grid:
     def _paint(self):
         for r in range(HAB_ROW0, ROWS):
             for c in range(COLS):
-                h = self.get(r,c); col = BY_IDX.get(h.get('colour',3), '#e8e8e8')
+                h = self.get(r,c)
+                col = BY_IDX.get(h.get('colour',DEFAULT_COLOUR), '#e8e8e8')
                 self.vars[(r,c)].set(h.get('name',''))
                 shown = col          # name always shows its own colour
                 cbg = STATE_BG.get(h.get('state', 0), CELL_BG)   # only the bg shows state

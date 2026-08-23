@@ -213,16 +213,51 @@ def test_a_name_with_a_tab_cannot_break_the_protocol(grid, say):
         assert len(line.split('\t')) == 5
 
 
-def test_clearing_a_name_deletes_the_habit(grid, say):
+def test_clearing_a_name_empties_the_habit_but_keeps_its_colour(grid, say):
+    """Clearing the name is how a habit goes away -- the pad lights nothing
+    without one. The colour stays: deleting the placeholder to type over it
+    would otherwise throw away the colour that was just picked."""
     say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
-    buf, real = io.StringIO(), sys.stdout
-    sys.stdout = buf
-    try:
-        grid.vars[(2, 0)].set('')
-        grid.root.update()
-    finally:
-        sys.stdout = real
-    assert '2,0' not in grid.habits
+    out = capture(grid, lambda: grid.vars[(2, 0)].set(''))
+    assert grid.habits['2,0']['name'] == ''
+    assert grid.habits['2,0']['colour'] == 37
+    assert out.lines('set') == ['set\t2\t0\t\t37'], 'the board is told both'
+
+
+def test_retyping_a_name_keeps_the_colour_that_was_there(grid, say):
+    """The bug: pick a colour, clear the placeholder, type the real name, and
+    the habit came back white."""
+    say('load\t' + json.dumps(HABITS), 'edit\t4\t4')
+    capture(grid, lambda: grid.set_colour(4, 4, 45))
+    capture(grid, lambda: grid.vars[(4, 4)].set(''))
+    out = capture(grid, lambda: grid.vars[(4, 4)].set('flossing'))
+    assert out.lines('set') == ['set\t4\t4\tflossing\t45']
+
+
+def test_the_colour_survives_the_whole_round_trip(grid, say, board, mod):
+    """The bug as reported, with the window wired to a real board: pick a
+    colour for an empty cell, delete the placeholder, type the real name."""
+    board.mode = mod.M_HAB
+    say('load\t{}', 'edit\t4\t4')
+
+    def deliver(lines):
+        board._popup.stdout = iter(l + '\n' for l in lines)
+        board._popup_reader()
+
+    deliver(capture(grid, lambda: grid.set_colour(4, 4, 45)))
+    deliver(capture(grid, lambda: grid.vars[(4, 4)].set('')))
+    assert board.habits['4,4'] == {'name': '', 'colour': 45, 'state': 0}
+    deliver(capture(grid, lambda: grid.vars[(4, 4)].set('flossing')))
+    assert board.habits['4,4'] == {'name': 'flossing', 'colour': 45, 'state': 0}
+
+
+def test_a_cell_with_neither_a_name_nor_a_colour_is_not_kept(grid, say, popup):
+    """Otherwise every cell ever typed into leaves a record behind."""
+    say('load\t' + json.dumps(HABITS), 'edit\t5\t5')
+    capture(grid, lambda: grid.vars[(5, 5)].set('x'))
+    assert grid.habits['5,5']['colour'] == popup.DEFAULT_COLOUR
+    capture(grid, lambda: grid.vars[(5, 5)].set(''))
+    assert '5,5' not in grid.habits
 
 
 def test_set_colour_only_applies_while_editing(grid, say):

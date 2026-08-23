@@ -75,8 +75,17 @@ def test_set_line_renames_and_recolours_keeping_state(hb):
     assert hb.habit(2, 0) == {'name': 'meds', 'colour': 9, 'state': 1}
 
 
-def test_set_line_with_an_empty_name_deletes(hb):
+def test_set_line_with_an_empty_name_empties_it_but_keeps_the_colour(hb, mod):
+    """The pad goes dark, since nothing without a name is lit, and the colour
+    is still there for whatever gets typed next."""
     feed(hb, ['set\t2\t0\t\t9'])
+    assert hb.habit(2, 0) == {'name': '', 'colour': 9, 'state': 0}
+    hb.render()
+    assert hb.out.lit()[mod.pad(2, 0)] == mod.OFF
+
+
+def test_set_line_with_neither_deletes(hb, mod):
+    feed(hb, [f'set\t2\t0\t\t{mod.WHITE}'])
     assert '2,0' not in hb.habits
 
 

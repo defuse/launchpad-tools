@@ -151,8 +151,10 @@ Two independent grids, daily and weekly, one per tab.
 on screen showing the whole grid, with that habit selected, where you can rename
 habits, pick colours, drag them around to rearrange, and double-click to cycle.
 Picking a colour for an empty cell creates the habit, named `SET NAME HERE` so
-you can type over it — a colour with no name is not a habit and would be
-dropped. Opened from the red pad instead, nothing is selected: no pad was
+you can type over it. Clearing a name is how a habit goes away — a pad with no
+name is dark and does nothing — but the cell keeps its colour, so deleting the
+placeholder to type the real name does not throw away the colour you just
+picked. Opened from the red pad instead, nothing is selected: no pad was
 pointing at anything.
 
 Everything applies immediately; Esc closes the window, and a quick tap of the
@@ -379,7 +381,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 695 tests, about fifty seconds
+tests/run-tests             # 703 tests, about fifty seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

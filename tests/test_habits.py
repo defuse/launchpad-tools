@@ -40,9 +40,39 @@ def test_cycle_state_ignores_empty_cells(hb):
     assert '7,7' not in hb.habits
 
 
-def test_set_habit_with_no_name_deletes(hb):
-    hb.set_habit(2, 0, {'name': '', 'colour': 3, 'state': 0})
+def test_set_habit_with_neither_a_name_nor_a_colour_deletes(hb, mod):
+    hb.set_habit(2, 0, {'name': '', 'colour': mod.WHITE, 'state': 0})
     assert '2,0' not in hb.habits
+
+
+def test_a_colour_outlives_the_name(hb, mod):
+    """Clearing the name to retype it used to throw the colour away with it,
+    so a habit renamed this way came back white."""
+    hb.set_habit(2, 0, {'name': '', 'colour': mod.CYAN, 'state': 0})
+    assert hb.habits['2,0'] == {'name': '', 'colour': mod.CYAN, 'state': 0}
+
+
+def test_a_nameless_habit_lights_nothing(hb, mod):
+    """It is kept for its colour, not because it is a habit. The pad is dark
+    until it has a name -- otherwise a cleared cell would still be lit."""
+    hb.set_habit(2, 0, {'name': '', 'colour': mod.CYAN, 'state': 2})
+    hb.mode = mod.M_HAB
+    hb.shown.clear()
+    hb.render()
+    assert hb.shown[mod.pad(2, 0)][1] == mod.OFF
+
+
+def test_clearing_a_name_clears_the_state_with_it(hb, mod):
+    """Otherwise the next habit typed into that cell arrives already done."""
+    hb.set_habit(2, 0, {'name': '', 'colour': mod.CYAN, 'state': 2})
+    assert hb.habits['2,0']['state'] == 0
+
+
+def test_a_nameless_habit_cannot_be_cycled(hb, mod):
+    """There is nothing to be in progress."""
+    hb.set_habit(2, 0, {'name': '', 'colour': mod.CYAN, 'state': 0})
+    hb.cycle_state(2, 0)
+    assert hb.habits['2,0']['state'] == 0
 
 
 def test_habit_tabs_are_independent(hb, mod):

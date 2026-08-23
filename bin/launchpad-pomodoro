@@ -2266,11 +2266,19 @@ class Board:
         # The popup reader thread also lands here, and _flush() serialises
         # habit_sets: mutate under the same lock or json.dumps() can trip over
         # a resized dict and lose the whole write.
+        if not h.get('name'):
+            # nothing without a name is in progress or complete, and a state
+            # kept here would come back with whatever is typed in the cell next
+            h = dict(h, state=0)
         with self._lock:
-            if h.get('name'):
+            if h.get('name') or h.get('colour', WHITE) != WHITE:
+                # A colour picked for a cell outlives its name. Clearing the
+                # name to retype it used to throw the colour away with it, so
+                # the habit came back white; the pad is dark either way, since
+                # render_habits lights nothing that has no name.
                 tbl[k] = h
             else:
-                tbl.pop(k, None)               # empty name = habit deleted
+                tbl.pop(k, None)               # nothing left of it at all
         self.save()
         if mode == self._popup_mode:
             self._popup_send_table()
