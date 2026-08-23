@@ -1,9 +1,9 @@
 # launchpad-tools
 
 A Novation Launchpad Mini MK3 as a desk board: pomodoro and break timers, daily
-and weekly habit trackers, disk/filesystem/temperature and audio controls, an
-audio spectrum, and CPU/network meters. The top row switches between them;
-everything else keeps running in the background.
+and weekly habit trackers, machine and audio controls, an audio spectrum, and
+CPU/network meters. The top row switches between them; everything else keeps
+running in the background.
 
 > **Written by an AI (Claude Opus) and not reviewed by a human.** It runs as a
 > systemd user service, opens a USB MIDI device, spawns a Tk window and writes
@@ -11,37 +11,51 @@ everything else keeps running in the background.
 > suite, but nobody has actually read it line by line. Read it yourself before
 > you run it.
 
+## The top row
+
 ```
-     0      1       2      3   4    5      6      7
-  ┌──────┬───────┬───────┬───┬───┬──────┬──────┬───────┐
-8 │ pomo │ daily │ weekly│mch│spc│ cpu  │ net  │ reset │   tabs
-  ├──────┴───────┴───────┴───┴───┴──────┴──────┴───────┤
-7 │            day bar: 8 x 3 h, deep blue             │
-  ├────────────────────────────────────────────────────┤
-6 │            four pomodoro timers                    │
-5 │            8 pads x 3 min = 24 min                 │
-4 │                                                    │
-3 │                                                    │
-  ├────────────────────────────────────────────────────┤
-2 │            toggles: off / red / green              │
-  ├────────────────────────────────────────────────────┤
-1 │            break timer, 8 x 1 min = 8 min          │
-  └────────────────────────────────────────────────────┘
+       0      1      2      3      4      5      6      7
+    ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬───────┐
+ 8  │ pomo │daily │weekly│ mach │ spec │ cpu  │ net  │ reset │
+    └──────┴──────┴──────┴──────┴──────┴──────┴──────┴───────┘
+```
+
+The selected tab is sky blue and the rest are white. Reset on the right is
+hold-only: two seconds clears what the current tab owns, and the row fills red
+as it goes so you can see it coming. A quick tap instead closes the habit
+window.
+
+The diagrams below show one tab each, rows 7 down to 1. In them:
+
+```
+·  off        W  white     G  green    R  red      B  blue
+Y  yellow     O  orange    P  pink     C  cyan     S  sky      M  magenta
+c  the habit's own colour               *  blinking
 ```
 
 ## Timers
 
-Press the leftmost pad to start. The row fills left to right, one pad per
-interval, the current pad blinking. When it runs out the row goes red with a
-green pad on the end: press the green one to claim it, any red one to write it
-off. Either way the leftmost pad puts it back to idle.
+```
+ 7   B  B  B  ·  ·  ·  ·  ·     day bar
+ 6   W  ·  ·  ·  ·  ·  ·  ·     idle — press the left pad to start
+ 5   G  G  G* ·  ·  ·  ·  ·     running — 3 min per pad
+ 4   R  R  R  R  R  R  R  G     elapsed — green claims it, red writes it off
+ 3   G  G  G  G  G  G  G  G     claimed
+ 2   ·  R  G  ·  ·  ·  ·  ·     toggles — press cycles off / red / green
+ 1   B  B  B* ·  ·  ·  ·  ·     break — 1 min per pad
+```
 
-Holding the leftmost pad for two seconds abandons a running timer — the only
-way to stop one part way through, deliberately awkward.
+Rows 6 to 3 are four independent timers, drawn above in the four states one can
+be in. A row fills left to right with the current pad blinking, and when it runs
+out the whole row goes red with a green pad on the end. Either answer puts it
+back to idle, and the left pad starts it again.
 
-The break row on the bottom is the same machine with a different length and
-palette: eight minutes, blue instead of green, with a two-strike warning at six
-minutes. The top row is the day bar, described below.
+Holding the leftmost pad for two seconds abandons a running timer — the only way
+to stop one part way through, deliberately awkward.
+
+The break row at the bottom is the same machine with a different length and
+palette: eight minutes, blue instead of green, with a warning two minutes from
+the end.
 
 Chimes are synthesised (see `share/make-sounds`) and distinguishable by count,
 so you can tell what happened without looking:
@@ -55,29 +69,149 @@ so you can tell what happened without looking:
 
 ## Habits
 
-Two independent grids, daily and weekly. Each pad is one habit, showing its own
-colour when unstarted, flashing red while in progress, solid green when done.
-A pad with no name is off and does nothing.
+```
+ 7   B  B  B  B  ·  ·  ·  ·     day bar — the weekly tab shows a week bar
+ 6   c  c  c  c  c  ·  ·  ·     one pad per habit, in its own colour
+ 5   R* c  G  c  ·  ·  ·  ·     blinking red = in progress, green = done
+ 4   c  c  c  ·  ·  ·  ·  ·
+ 3   c  c  c  c  ·  ·  ·  ·
+ 2   c  c  ·  ·  ·  ·  ·  ·
+ 1   ·  ·  ·  ·  ·  ·  ·  ·     a pad with no name is off and does nothing
+```
 
-**Hold** a pad to cycle its state, once per second held. **Press** it to open a
-window on screen showing the whole grid, where you can rename habits, pick
-colours, drag them around to rearrange, and double-click to cycle. Picking a
-colour for an empty cell creates the habit, named `SET NAME HERE` so you can
-type over it — a colour with no name is not a habit and would be dropped. Everything
-applies immediately; Esc closes the window, and a quick tap of the reset pad
-does too. Holding reset for two seconds clears the current tab back to
+Two independent grids, daily and weekly, one per tab.
+
+**Hold** a pad to cycle it, once per second held. **Press** it to open a window
+on screen showing the whole grid, where you can rename habits, pick colours,
+drag them around to rearrange, and double-click to cycle. Picking a colour for
+an empty cell creates the habit, named `SET NAME HERE` so you can type over it —
+a colour with no name is not a habit and would be dropped.
+
+Everything applies immediately; Esc closes the window, and a quick tap of the
+reset pad does too. Holding reset for two seconds clears the current tab back to
 unstarted.
+
+## Machine and audio
+
+```
+ 7   B  B  B  ·  ·  ·  ·  ·     day bar
+ 6   G  G  G  G  G  G  ·  ·     disks — one pad per drive
+ 5   Y  G  G  G  ·  ·  ·  ·     filesystems — / · home · Data-1 · Fast-1
+ 4   ·  ·  ·  ·  ·  ·  ·  ·
+ 3   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
+ 2   ·  ·  ·  ·  ·  ·  ·  ·
+ 1   B  W  ·  G  ·  W  S  W     speakers · headset · | effects | prev play next
+```
+
+Everything above the bottom row is read-only:
+
+| | |
+|---|---|
+| disks | green in sync, amber rebuilding or in a degraded array, strobing red failed |
+| filesystems | green with room to spare, yellow getting full, red nearly full |
+| temperatures | green normal, yellow warm, red hot, strobing red too hot |
+
+A pad is a whole drive, not an array member, since several arrays can share a
+pair of drives and it is the drive that dies. A drive that has vanished entirely
+has no pad to light — `/proc/mdstat` only names what is still there — so what
+you see in that case is its array's surviving half going amber.
+
+The bottom row is the only part you can press. The two output pads are white
+with the current one blue; picking the headset takes its microphone with it. The
+EasyEffects pad is an on/off switch whose colour says which preset is live:
+white off, green for the room preset, orange for the headset one — worked out
+from EasyEffects' own autoload bindings, so renaming a preset cannot leave the
+pad lying. Play/pause lights sky blue while Spotify is playing.
+
+Every pad here reports rather than remembers. Pressing one fires the command and
+then reads the state back, so what you see is what `pactl` and EasyEffects say,
+never what the board asked for — change the output from the tray applet and the
+pads follow.
+
+**While this tab is on screen it queries EasyEffects once a second, and that
+closes the EasyEffects window if you have one open.** Any invocation of its CLI
+does, there is no quieter way to ask, and its config file is written too lazily
+to use instead. Switch to another tab while working in the UI; nothing is asked
+from anywhere else.
+
+## Spectrum
+
+```
+ 7   ·  ·  ·  ·  W  ·  ·  ·     white peaks hang above the bars and fall back
+ 6   ·  ·  Y  ·  C  ·  ·  W
+ 5   R  ·  Y  ·  C  ·  ·  ·
+ 4   R  O  Y  G  C  ·  B  M
+ 3   R  O  Y  G  C  S  B  M
+ 2   R  O  Y  G  C  S  B  M
+ 1   R  O  Y  G  C  S  B  M
+     bass ────────────────► treble
+```
+
+Eight bands of whatever you are listening to, captured from the current
+output's monitor, so it hears what the speakers get — EasyEffects included —
+and follows the output when you switch it. Each band has its own hue rather
+than the meters' green-yellow-red, so the tab is recognisable at a glance.
+
+Bands are log spaced and tilted, since music carries most of its energy low
+down and an untilted display leaves the right of the board dead. This tab is
+drawn faster than the rest of the board, which is what audio needs and a
+pomodoro cell does not. If it reads too hot or too cold for what you listen to,
+`SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` in `bin/launchpad-pomodoro` are the
+knobs; they are calibrated for this system's usual listening level.
+
+Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
+is simply dark.
+
+## CPU
+
+```
+ 7   ·  ·  ·  R  ·  ·  ·  ·     one column per group of threads, six tall
+ 6   ·  ·  ·  Y  ·  ·  ·  ·
+ 5   ·  G  ·  G  ·  ·  ·  ·
+ 4   ·  G  ·  G  ·  G  ·  ·
+ 3   G  G  ·  G  ·  G  ·  G
+ 2   G  G  G  G  G  G  G  G
+ 1   G  G  G  B  B  Y  Y  ·     memory — used · buffers · cache
+```
+
+Each column is the busiest of its four threads rather than their average, so a
+single pegged core is visible instead of being smeared away. Memory across the
+bottom uses htop's colours.
+
+## Network
+
+```
+ 7   ·  ·  ·  ·   ·  ·  ·  ·    download on the left, upload on the right
+ 6   ·  ·  ·  ·   ·  ·  ·  ·
+ 5   C  C  ·  ·   ·  ·  ·  ·
+ 4   C  C  C  C   O  ·  ·  ·
+ 3   C  C  C  C   O  O  ·  ·
+ 2   C  C  C  C   O  O  O  O
+ 1   C  C  C  C   O  O  O  O
+```
+
+Two half-width bars filling from the bottom. Each row is four pads, so a
+part-filled row gives four times the resolution of whole rows alone. The scale
+is logarithmic, from about 1 KB/s to about 1 Gbit/s, because a linear one sits
+at zero all day.
 
 ## Bars
 
-The top row of the pomodoro tab and of both habit tabs is not part of the tab:
-it shows how much of a period has begun. The pomodoro and daily tabs share the
-same day — eight three-hour slices from midnight, deep blue — and the weekly
-tab shows its week, one slice per day from Sunday, deep purple.
+The top row of the pomodoro tab, both habit tabs and the machine tab is not part
+of that tab: it shows how much of a period has begun. The pomodoro, machine and
+daily tabs share the same day — eight three-hour slices from midnight, deep blue
+— and the weekly tab shows its week, one slice per day from Sunday, deep purple.
 
-A cell lights as its slice *starts*, so a full bar means you are inside the
-last one. Seven days share eight cells, so the spare one lights with the
-seventh and Saturday reads as full.
+```
+ 09:00   B  B  B  B  ·  ·  ·  ·     four slices of the day gone
+ 21:00   B  B  B  B  B  B  B  B     full: you are in the last slice
+ 23:00   Y* Y* Y* Y* Y* Y* Y* Y*    an hour left, and it starts saying so
+ 23:55   R* R* R* R* R* R* R* R*    five minutes
+```
+
+A cell lights as its slice *starts*, so a full bar means you are inside the last
+one. Seven days share eight cells, so the spare one lights with the seventh and
+Saturday reads as full.
 
 A full week turns pink — a bar that will sit there all Saturday should not be
 shouting. A full day stays blue: its last three hours are not urgent, they are
@@ -95,78 +229,14 @@ and then counts itself down:
 The weekly bar never blinks: it is full for a whole day, and a day of blinking
 pads is noise.
 
-## Machine and audio
-
-Fourth tab. Everything above the bottom row is read-only:
-
-| row | |
-|---|---|
-| disks | one pad per physical drive — green in sync, amber rebuilding or in a degraded array, strobing red failed |
-| filesystems | `/`, `/home`, `Data-1`, `Fast-1` — green over 100GB free, yellow under, red under 30GB |
-| temperatures | CPU, GPU, NVMe, thresholds per part: 70°C is a warm CPU and a cooked NVMe |
-
-A pad is a whole drive, not an array member, since several arrays can share a
-pair of drives and it is the drive that dies. A drive that has vanished
-entirely has no pad to light — `/proc/mdstat` only names what is still there —
-so what you see in that case is its array's surviving half going amber.
-
-The bottom row is the only part you can press: output to `game_stereo`, output
-to the headset, a gap, EasyEffects on/off, a gap, then previous, play/pause and
-next. The output pads are white with the current one blue, and every pad shows
-what the system is actually doing rather than the last thing the board asked
-for — change the output in the tray applet and the pads follow. Picking the
-headset takes its microphone with it.
-
-The output pads show the default sink and nothing else. The EasyEffects pad is
-an on/off switch whose colour says which preset is live: white off, green for
-the room preset, orange for the headset one — worked out from EasyEffects' own
-autoload bindings, so renaming a preset cannot leave the pad lying.
-
-Every pad here reports rather than remembers. Pressing one fires the command
-and then reads the state back, so what you see is what `pactl` and EasyEffects
-say, never what the board asked for.
-
-**While this tab is on screen it queries EasyEffects once a second, and that
-closes the EasyEffects window if you have one open.** Any invocation of its CLI
-does — there is no quieter way to ask, and its config file is written too
-lazily to use instead. Switch to another tab while working in the UI; nothing
-is asked from anywhere else.
-
-## Spectrum
-
-Fifth tab: eight bands of whatever you are listening to, captured from the
-current output's monitor with `pw-record`, so it hears what the speakers get —
-EasyEffects included — and follows the output when you switch it. Each band has
-its own hue rather than the meters' green-yellow-red, and a peak marker that
-hangs above the bar and falls back.
-
-Bands are log spaced from bass to treble and tilted, since music carries most
-of its energy low down and an untilted display leaves the right of the board
-dead. It is drawn faster than the rest of the board, which is what audio needs
-and a pomodoro cell does not. If it reads too hot or too cold for what you
-listen to, `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` at the top of
-`bin/launchpad-pomodoro` are the knobs; they are calibrated for this system's
-usual listening level.
-
-Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
-is simply dark.
-
-## Meters
-
-CPU shows eight columns of six pads, each column the busiest of four threads —
-a single pegged core is visible rather than averaged away. Network is two
-half-width bars filling from the bottom, download on the left and upload on the
-right, on a log scale from 1 KB/s to about 1 Gbit/s because a linear one sits
-at zero all day.
-
 ## Install
 
-Needs Python 3, `mido` and `python-rtmidi` for MIDI, and `tkinter` for the habit
-window.
+Needs Python 3, `mido` and `python-rtmidi` for MIDI, `tkinter` for the habit
+window, and `numpy` for the spectrum.
 
 ```sh
 sudo pacman -S python-mido python-rtmidi python-numpy   # Arch
-sudo apt install python3-mido python3-rtmidi python3-tk   # Debian/Ubuntu
+sudo apt install python3-mido python3-rtmidi python3-tk python3-numpy   # Debian/Ubuntu
 
 git clone git@github.com:defuse/launchpad-tools.git
 cd launchpad-tools
@@ -190,7 +260,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 357 tests, about nine seconds
+tests/run-tests             # 358 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
@@ -220,10 +290,10 @@ of `bin/launchpad-pomodoro` — change them there and those tabs work elsewhere.
 | hardware | a Launchpad Mini MK3 in Programmer Mode; other Launchpads use different SysEx and pad numbering |
 
 Preset *names* are not assumed anywhere: which preset is the headset's is read
-from your EasyEffects autoload bindings, so it follows whatever you have set
-up. Everything else on those tabs needs `pactl`, `pw-record`, `gdbus` and
-`nvidia-smi` on `PATH`; a missing one leaves its pads dark rather than
-breaking the board.
+from your EasyEffects autoload bindings, so it follows whatever you have set up.
+Everything else on those tabs needs `pactl`, `pw-record`, `gdbus` and
+`nvidia-smi` on `PATH`; a missing one leaves its pads dark rather than breaking
+the board.
 
 ## Notes
 

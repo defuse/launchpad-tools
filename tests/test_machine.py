@@ -117,6 +117,18 @@ def test_a_filesystem_that_is_not_there_strobes(mach, mod):
     assert show(mach, mod, snap, mod.FS_ROW)[0] in (mod.RED, mod.OFF)
 
 
+def test_the_readme_still_names_what_this_tab_assumes(mod):
+    """The README tells a reader which tabs are wired to one particular desk.
+    Renaming a sink or a mount here without updating it there would leave that
+    section quietly lying, which it has done before."""
+    import os
+    readme = os.path.join(os.path.dirname(os.path.dirname(mod.__file__)), 'README.md')
+    text = open(readme).read()
+    for claim in (mod.GAME_SINK, mod.HEADSET, 'Data-1', 'Fast-1',
+                  'k10temp', 'nvidia-smi', '/proc/mdstat'):
+        assert claim in text, f'README no longer mentions {claim}'
+
+
 def test_the_four_filesystems_are_the_real_ones(mod):
     assert [m.name for m in mod.MOUNTS] == ['root', 'home', 'data', 'fast']
     assert mod.MOUNTS[0].path == '/'
