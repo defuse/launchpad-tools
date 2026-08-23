@@ -59,8 +59,8 @@ def test_week_bar_counts_down_to_sunday(mod):
 # ---- the last hour --------------------------------------------------------
 # clock time -> (colour, blink period in seconds; 0 = solid)
 @pytest.mark.parametrize('h,mi,colour,period', [
-    (21, 0,  'RED',    0),              # full, but three hours still to run
-    (22, 59, 'RED',    0),
+    (21, 0,  'BLUE',   0),              # full, but three hours still to run
+    (22, 59, 'BLUE',   0),
     (23, 0,  'YELLOW', 3.3),            # heads-up: half the rate, same dark gap
     (23, 29, 'YELLOW', 3.3),
     (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
@@ -87,9 +87,11 @@ def test_slowing_the_blink_lengthens_the_lit_chunk_not_the_gap(mod):
 
 def test_the_last_hour_warms_from_yellow_to_red(mod):
     """Colour escalates with the rate, so the bar reads at a glance and from
-    the corner of an eye both."""
+    the corner of an eye both -- and never doubles back to a cooler colour."""
     assert [st.colour for st in mod.BAR_STAGES] == \
         [mod.RED, mod.RED, mod.ORANGE, mod.YELLOW]      # shortest-remaining first
+    assert mod.DAY.full not in [st.colour for st in mod.BAR_STAGES], \
+        'a full bar must not already be wearing an escalation colour'
 
 
 def test_each_stage_blinks_faster_than_the_one_before(mod):
@@ -111,7 +113,7 @@ def test_the_weekly_bar_has_one_stage_and_it_is_solid(mod):
 def test_a_full_week_is_pink_and_a_full_day_is_red(mod):
     """The week sits full for a whole day, so it says so quietly."""
     assert mod.WEEK.full == mod.PINK
-    assert mod.DAY.full == mod.RED
+    assert mod.DAY.full == mod.BLUE, 'the last three hours are not urgent'
 
 
 def test_every_blink_is_chunks_cut_out_of_a_lit_pad(mod):
@@ -145,8 +147,8 @@ def test_weekly_bar_is_purple(mod, out):
         [mod.WEEK.colour] * 4 + [mod.OFF] * 4
 
 
-def test_a_full_bar_stops_showing_its_own_colour(mod, out):
-    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.RED] * 8
+def test_a_full_bar_lights_every_cell(mod, out):
+    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.BLUE] * 8
     assert paint(mod, out, at(2026, 8, SAT, 12, 0), mod.M_HAB2) == [mod.PINK] * 8
 
 

@@ -22,10 +22,10 @@ Pomodoro board on a Novation Launchpad Mini MK3.
 The habit tabs give up their top row to the same kind of bar, each for its own
 period: the daily tab shows the day, the weekly one shows the week, a pad per
 day. A cell lights as its slice STARTS, so a full bar means you are inside the
-last slice -- the weekly bar turns pink for Saturday, and the daily one goes
-red for its final three hours, then spends the last hour counting itself down:
-yellow blinking slowly from 23:00, orange at the pomodoro cadence from 23:30,
-red at twice that from 23:40, and rapid red from 23:50.
+last slice -- the weekly bar turns pink for Saturday, while the daily one stays
+blue until an hour is left and then counts itself down: yellow blinking slowly
+from 23:00, orange at the pomodoro cadence from 23:30, red at twice that from
+23:40, and rapid red from 23:50.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -176,10 +176,11 @@ class Stage(NamedTuple):
     off:    float                      # seconds dark; 0 means solid
 
 
-# A full bar is red and still. Through the final hour it starts saying so, and
-# warms as it goes: a slow yellow blink is a heads-up, orange means the half
-# hour is gone, red means minutes. Colour and rate escalate together, so the
-# bar is readable at a glance and from the corner of an eye both.
+# A full bar holds still in its period's full colour until the last hour, then
+# warms and quickens together: a slow yellow blink is a heads-up, orange means
+# the half hour is gone, red means minutes. Colour and rate escalate in step,
+# so the bar is readable at a glance and from the corner of an eye both, and
+# never doubles back -- nothing after this point returns to a cooler colour.
 #
 # Changing the rate lengthens or shortens the LIT chunk; the dark one stays at
 # FLASH_OFF. A gap that grows with the period stops reading as a blink and
@@ -255,7 +256,10 @@ class Period(NamedTuple):
         return self.solid
 
 
-DAY  = Period('day', BLUE, full=RED, slices=CELLS, step=3 * 3600,
+# The day stays its own blue once full: the last three hours are not urgent,
+# they are just the last three hours. The colour only leaves blue when there is
+# an hour left and it starts counting down.
+DAY  = Period('day', BLUE, full=BLUE, slices=CELLS, step=3 * 3600,
               into=_into_day, flashes=True)
 # The weekly bar does not flash: it is full for a whole day, and a day of
 # blinking pads is noise rather than urgency. Pink rather than red for the same
