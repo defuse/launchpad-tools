@@ -22,9 +22,10 @@ Pomodoro board on a Novation Launchpad Mini MK3.
 The habit tabs give up their top row to the same kind of bar, each for its own
 period: the daily tab shows the day, the weekly one shows the week, a pad per
 day. A cell lights as its slice STARTS, so a full bar means you are inside the
-last slice -- the daily bar goes red for its final three hours, then spends the
-last hour counting itself down: yellow blinking slowly from 23:00, red at the
-pomodoro cadence from 23:30, twice that from 23:40, rapid from 23:50.
+last slice -- the weekly bar turns pink for Saturday, and the daily one goes
+red for its final three hours, then spends the last hour counting itself down:
+yellow blinking slowly from 23:00, red at the pomodoro cadence from 23:30,
+twice that from 23:40, rapid from 23:50.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -191,7 +192,6 @@ BAR_STAGES = (
     Stage(30 * 60, RED,    FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
     Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
 )
-BAR_FULL = Stage(None, RED, 0, 0)                  # full, with time still to run
 
 
 def _into_day(t):
@@ -212,7 +212,8 @@ class Period(NamedTuple):
     past midnight.
     """
     name:    str
-    colour:  int
+    colour:  int                       # while it is filling
+    full:    int                       # once every cell is lit
     slices:  int                       # slices in the period, at most CELLS
     step:    int                       # seconds per slice
     into:    Callable                  # seconds into the period, from a struct_time
@@ -221,6 +222,11 @@ class Period(NamedTuple):
     @property
     def length(self):
         return self.slices * self.step
+
+    @property
+    def solid(self):
+        """A full bar with time still to run: lit, and holding still."""
+        return Stage(None, self.full, 0, 0)
 
     def bar(self, now=None):
         """(cells lit, seconds left).
@@ -241,17 +247,20 @@ class Period(NamedTuple):
         a day of blinking pads is noise rather than urgency.
         """
         if not self.flashes:
-            return BAR_FULL
+            return self.solid
         for st in BAR_STAGES:
             if left <= st.within:
                 return st
-        return BAR_FULL
+        return self.solid
 
 
-DAY  = Period('day', BLUE, slices=CELLS, step=3 * 3600, into=_into_day, flashes=True)
+DAY  = Period('day', BLUE, full=RED, slices=CELLS, step=3 * 3600,
+              into=_into_day, flashes=True)
 # The weekly bar does not flash: it is full for a whole day, and a day of
-# blinking pads is noise rather than urgency.
-WEEK = Period('week', PURPLE, slices=7, step=86400, into=_into_week, flashes=False)
+# blinking pads is noise rather than urgency. Pink rather than red for the same
+# reason -- a bar that will sit there all Saturday should not be shouting.
+WEEK = Period('week', PURPLE, full=PINK, slices=7, step=86400,
+              into=_into_week, flashes=False)
 
 # Which bar a tab carries on BAR_ROW. The pomodoro tab and the daily habit tab
 # show the same day, drawn by the same code from the same Period.

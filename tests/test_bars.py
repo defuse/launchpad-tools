@@ -96,9 +96,15 @@ def test_each_stage_blinks_faster_than_the_one_before(mod):
 
 def test_the_weekly_bar_has_one_stage_and_it_is_solid(mod):
     """Not "a slow blink": the weekly bar is full for a whole day."""
-    assert all(mod.WEEK.stage(left) is mod.BAR_FULL
+    assert all(mod.WEEK.stage(left) == mod.WEEK.solid
                for left in (7 * 86400, 3600, 60, 0))
-    assert mod.BAR_FULL.off == 0
+    assert mod.WEEK.solid.off == 0
+
+
+def test_a_full_week_is_pink_and_a_full_day_is_red(mod):
+    """The week sits full for a whole day, so it says so quietly."""
+    assert mod.WEEK.full == mod.PINK
+    assert mod.DAY.full == mod.RED
 
 
 def test_every_blink_is_chunks_cut_out_of_a_lit_pad(mod):
@@ -132,9 +138,9 @@ def test_weekly_bar_is_purple(mod, out):
         [mod.WEEK.colour] * 4 + [mod.OFF] * 4
 
 
-def test_a_full_bar_turns_red(mod, out):
+def test_a_full_bar_stops_showing_its_own_colour(mod, out):
     assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.RED] * 8
-    assert paint(mod, out, at(2026, 8, SAT, 12, 0), mod.M_HAB2) == [mod.RED] * 8
+    assert paint(mod, out, at(2026, 8, SAT, 12, 0), mod.M_HAB2) == [mod.PINK] * 8
 
 
 def when(base, stage, want_dark):
@@ -164,7 +170,7 @@ def test_the_weekly_bar_never_blinks(mod, out):
     """It is full for a whole day; blinking that long is just noise."""
     base = at(2026, 8, SAT, 23, 10)
     stage = mod.DAY.stage(mod.DAY.bar(base)[1])          # when the DAY bar is dark
-    assert paint(mod, out, when(base, stage, True), mod.M_HAB2) == [mod.RED] * 8
+    assert paint(mod, out, when(base, stage, True), mod.M_HAB2) == [mod.PINK] * 8
 
 
 # ---- the row is not a habit row any more ----------------------------------

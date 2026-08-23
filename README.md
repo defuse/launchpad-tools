@@ -77,8 +77,9 @@ means you are inside the last one. Lighting on the way out would put the final
 cell on the stroke of midnight, replaced by an empty bar in the same instant.
 Seven days share eight cells, so the spare one lights with the seventh.
 
-A full bar turns red and sits still. The daily one then spends the last hour
-counting itself down:
+A full bar stops showing its own colour: the day turns red, the week turns
+pink, since a bar that will sit there all Saturday should not be shouting.
+The daily one then spends the last hour counting itself down:
 
 | | |
 |---|---|
