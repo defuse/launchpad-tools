@@ -41,9 +41,10 @@ The machine tab, fourth from the left, is read-only except its bottom row:
           changing the output or the effects anywhere else moves the pads.
   rows 4, 2   reserved, drawn dark
 
-  Picking an output picks its processing too: the speakers are corrected by an
-  EQ fitted to the room and the headset is not, so the game_stereo pad turns
-  EasyEffects on and the headset pad bypasses it.
+  The EasyEffects pad is an on/off switch whose COLOUR says which preset is
+  live: white off, green for the room, orange for the headset. EasyEffects
+  autoloads a preset per output device, so switching the output switches the
+  processing by itself and the board does not touch it -- it only reports.
 
 Everything on that tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
@@ -356,6 +357,12 @@ SPOTIFY   = 'org.mpris.MediaPlayer2.spotify'
 # (`easyeffects -b 3`) starts a second instance to talk to the first, and that
 # closes the window the first one has open -- once a poll, every poll.
 EE_CONF = os.path.expanduser('~/.config/easyeffects/db/easyeffectsrc')
+# Which preset EasyEffects loads for which output. Read rather than configured
+# here: the pad should follow whatever autoload is actually set to, so renaming
+# a preset in EasyEffects cannot leave the board lying about it.
+EE_AUTOLOAD = os.path.expanduser('~/.local/share/easyeffects/autoload/output')
+PRESET_HEADSET = ORANGE                    # effects on, wearing the headset
+PRESET_MAIN    = GREEN                     # effects on, out through the room
 
 
 class Button(NamedTuple):
@@ -554,23 +561,48 @@ def hwmon_temp(name, label):
     return None
 
 
+def read_conf(key, section):
+    """One value out of EasyEffects' Qt-style config file."""
+    try:
+        at = ''
+        for line in open(EE_CONF):
+            line = line.strip()
+            if line.startswith('['):
+                at = line
+            elif at == section and line.startswith(key + '='):
+                return line.split('=', 1)[1].strip()
+    except Exception:
+        pass
+    return ''
+
+
+def headset_preset():
+    """The preset EasyEffects autoloads for the headset, or ''.
+
+    Taken from the autoload files EasyEffects writes itself, so the pad follows
+    whatever is actually bound rather than a preset name copied in here that
+    could quietly stop matching.
+    """
+    try:
+        for name in os.listdir(EE_AUTOLOAD):
+            if not name.endswith('.json'):
+                continue
+            with open(os.path.join(EE_AUTOLOAD, name)) as fh:
+                entry = json.load(fh)
+            if HEADSET in entry.get('device', ''):
+                return entry.get('preset-name', '')
+    except Exception:
+        pass
+    return ''
+
+
 def read_bypass():
     """EasyEffects' global bypass, straight out of its config file.
 
     It writes the file the instant the setting changes, so this is as live as
     asking the application would be, and it costs a read instead of a process.
     """
-    try:
-        section = ''
-        for line in open(EE_CONF):
-            line = line.strip()
-            if line.startswith('['):
-                section = line
-            elif section == '[EffectsPipelines]' and line.startswith('bypass='):
-                return line.split('=', 1)[1].strip().lower() == 'true'
-    except Exception:
-        pass
-    return False
+    return read_conf('bypass', '[EffectsPipelines]').lower() == 'true'
 
 
 def gpu_temp():
@@ -591,6 +623,8 @@ class Snapshot(NamedTuple):
     sink:    str = ''                  # the default sink, however it got set
     running: bool = False              # EasyEffects is up at all
     effects: bool = False              # ...and not bypassed
+    preset:  str = ''                  # the output preset it has loaded
+    headset_preset: str = ''           # ...and the one autoload gives the headset
     playing: bool = False              # Spotify
 
 
@@ -656,7 +690,9 @@ class Machine:
         a deliberate press, unacceptable once every poll.
         """
         running = bool(sh('pgrep', '-x', 'easyeffects').strip())
-        self.assume(running=running, effects=running and not read_bypass())
+        self.assume(running=running, effects=running and not read_bypass(),
+                    preset=read_conf('lastLoadedOutputPreset', '[Presets]'),
+                    headset_preset=headset_preset())
 
     def read_temps(self):
         readings = []
@@ -1170,7 +1206,15 @@ class Board:
                 if not name:   self.set(p, OFF)            # unplugged, or gone
                 else:          self.set(p, SELECTED if name == snap.sink else WHITE)
             elif b.kind == 'effects':
-                self.set(p, GREEN if snap.effects else WHITE)
+                # Off is off whichever preset would have been loaded; on says
+                # which one is, because getting the room's EQ in headphones
+                # sounds wrong in a way that is easy to miss and hard to place.
+                if not snap.effects:
+                    self.set(p, WHITE)
+                elif snap.preset and snap.preset == snap.headset_preset:
+                    self.set(p, PRESET_HEADSET)
+                else:
+                    self.set(p, PRESET_MAIN)
             else:
                 self.set(p, PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE)
 
@@ -1194,10 +1238,11 @@ class Board:
                 mic = match(HEADSET, snap.sources)
                 if mic:
                     spawn('pactl', 'set-default-source', mic)
-            # Each output has its own idea of processing: the speakers are
-            # corrected by an EQ fitted to the room, the headset is not, and
-            # switching without that is switching to the wrong sound.
-            self.machine.set_effects(b.arg == GAME_SINK)
+            # Nothing is done to EasyEffects here: it autoloads a preset per
+            # output device, so switching the sink switches the processing by
+            # itself. Bypassing for the headset -- which is what this did
+            # before there was a headset preset -- would make that preset
+            # unreachable from the board.
             self.machine.assume(sink=name)
         elif b.kind == 'effects':
             self.machine.toggle_effects()

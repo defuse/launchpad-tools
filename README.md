@@ -118,9 +118,12 @@ what the system is actually doing rather than the last thing the board asked
 for — change the output in the tray applet and the pads follow. Picking the
 headset takes its microphone with it.
 
-Picking an output picks its processing with it — the speakers are corrected by
-an EQ fitted to the room and the headset is not, so `game_stereo` turns
-EasyEffects on and the headset bypasses it.
+The EasyEffects pad is an on/off switch whose colour says which preset is live:
+white off, green for the room preset, orange for the headset one. EasyEffects
+autoloads a preset per output device, so switching output switches the
+processing on its own — the board reports it rather than driving it. Which
+preset counts as the headset one is read from EasyEffects' own autoload
+bindings, so renaming a preset there cannot leave the pad lying about it.
 
 All of it comes from a background poller. Nothing is read during a frame:
 `easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
@@ -183,7 +186,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 337 tests, about nine seconds
+tests/run-tests             # 344 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

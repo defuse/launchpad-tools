@@ -4,6 +4,7 @@ Nothing here reads the real machine: every test hands the board a snapshot and
 checks what it draws, or presses a pad and checks what it would have run. The
 poller that fills the snapshot in is a thread the harness never starts.
 """
+import json
 import pytest
 from lpharness import FakeOut, FakePopen, new_board
 
@@ -182,12 +183,60 @@ def test_the_gaps_stay_dark(mach, mod):
     assert painted[2] == mod.OFF and painted[4] == mod.OFF
 
 
-def test_effects_and_transport_colours(mach, mod):
-    on = show(mach, mod, audio(mod, effects=True, running=True, playing=True), mod.CTRL_ROW)
-    assert on[3] == mod.GREEN and on[6] == mod.PLAYING
+def test_transport_colours(mach, mod):
+    on = show(mach, mod, audio(mod, playing=True), mod.CTRL_ROW)
+    assert on[6] == mod.PLAYING
     off = show(mach, mod, audio(mod), mod.CTRL_ROW)
-    assert off[3] == mod.WHITE and off[6] == mod.WHITE
-    assert off[5] == mod.WHITE and off[7] == mod.WHITE
+    assert off[5] == mod.WHITE and off[6] == mod.WHITE and off[7] == mod.WHITE
+
+
+# ---- which preset is live ------------------------------------------------
+@pytest.mark.parametrize('effects,preset,colour', [
+    (False, 'room',    'WHITE'),           # off is off, whatever would load
+    (False, 'cans',    'WHITE'),
+    (True,  'room',    'PRESET_MAIN'),
+    (True,  'cans',    'PRESET_HEADSET'),
+    (True,  '',        'PRESET_MAIN'),     # nothing known: on is on
+])
+def test_the_effects_pad_shows_which_preset_is_active(mach, mod, effects, preset, colour):
+    """Getting the room's EQ in headphones sounds wrong in a way that is easy
+    to miss and hard to place, so the pad says which one you are hearing."""
+    snap = audio(mod, running=True, effects=effects, preset=preset, headset_preset='cans')
+    assert show(mach, mod, snap, mod.CTRL_ROW)[3] == getattr(mod, colour)
+
+
+def test_it_is_still_an_on_off_button(mach, mod):
+    """The colour reports the preset; the press does not choose one."""
+    press(mach, mod, 3, audio(mod, running=True, effects=True,
+                              preset='cans', headset_preset='cans'))
+    assert ran('easyeffects') == [['easyeffects', '-b', '1']]
+
+
+def test_the_headset_preset_is_read_from_easyeffects_own_bindings(mod, tmp_path, monkeypatch):
+    """Not copied in here: renaming a preset in EasyEffects must not leave the
+    board reporting a preset that no longer exists."""
+    monkeypatch.setattr(mod, 'EE_AUTOLOAD', str(tmp_path))
+    (tmp_path / 'game_stereo:.json').write_text(json.dumps(
+        {'device': 'game_stereo', 'device-profile': '', 'preset-name': 'room'}))
+    (tmp_path / 'headset.json').write_text(json.dumps(
+        {'device': f'alsa_output.usb-{mod.HEADSET}-USB-00.analog-stereo',
+         'device-profile': 'Analog Output', 'preset-name': 'at headphones'}))
+    assert mod.headset_preset() == 'at headphones'
+
+
+def test_no_bindings_at_all_is_not_an_error(mod, tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, 'EE_AUTOLOAD', str(tmp_path / 'nope'))
+    assert mod.headset_preset() == ''
+
+
+def test_reading_a_config_value(mod, tmp_path, monkeypatch):
+    conf = tmp_path / 'easyeffectsrc'
+    conf.write_text('[Presets]\nlastLoadedOutputPreset=at headphones\n\n'
+                    '[StreamOutputs]\noutputDevice=game_stereo\n')
+    monkeypatch.setattr(mod, 'EE_CONF', str(conf))
+    assert mod.read_conf('lastLoadedOutputPreset', '[Presets]') == 'at headphones'
+    assert mod.read_conf('outputDevice', '[Presets]') == '', 'wrong section'
+    assert mod.read_conf('nothing', '[Presets]') == ''
 
 
 # ---- pressing it ---------------------------------------------------------
@@ -211,27 +260,15 @@ def test_choosing_the_headset_takes_the_microphone_with_it(mach, mod):
                             ['pactl', 'set-default-source', SOURCES[0]]]
 
 
-@pytest.mark.parametrize('col,arg,running,expect', [
-    (0, '-b', True,  '2'),        # to the speakers: processing on
-    (1, '-b', True,  '1'),        # to the headset: processing off
-])
-def test_switching_output_carries_its_processing_with_it(mach, mod, col, arg, running, expect):
-    """The speakers are corrected by an EQ fitted to the room and the headset
-    is not, so switching without switching that is switching to the wrong
-    sound."""
-    press(mach, mod, col, audio(mod, sink='', running=running, effects=True))
-    assert ran('easyeffects') == [['easyeffects', arg, expect]]
-
-
-def test_switching_to_the_speakers_starts_a_stopped_easyeffects(mach, mod):
-    press(mach, mod, 0, audio(mod, sink='', running=False, effects=False))
-    assert ran('easyeffects') == [['easyeffects', '--gapplication-service']]
-
-
-def test_switching_to_the_headset_with_easyeffects_stopped_runs_nothing(mach, mod):
-    """Nothing to bypass, and starting it just to bypass it is absurd."""
-    press(mach, mod, 1, audio(mod, sink='', running=False, effects=False))
+@pytest.mark.parametrize('col', [0, 1])
+def test_switching_output_leaves_easyeffects_alone(mach, mod, col):
+    """EasyEffects autoloads a preset per output device, so the switch carries
+    its own processing. Bypassing for the headset -- which is what this used to
+    do, before there was a headset preset -- would make that preset unreachable
+    from the board."""
+    press(mach, mod, col, audio(mod, sink='', running=True, effects=True))
     assert ran('easyeffects') == []
+    assert ran('pactl')[0][1] == 'set-default-sink'
 
 
 def test_reading_the_bypass_state_never_touches_easyeffects(mod, tmp_path, monkeypatch):
