@@ -34,7 +34,7 @@ to the bottom of the board — the same numbering the code uses. In them:
 ```
 ·  off        W  white     G  green    R  red      B  blue
 Y  yellow     O  orange    P  pink     C  cyan     S  sky      M  magenta
-c  the habit's own colour               *  blinking
+b  pale blue    c  the habit's own colour    *  blinking
 ```
 
 ## Timers
@@ -99,10 +99,10 @@ unstarted.
 
 ```
  1   B  B  B  ·  ·  ·  ·  ·     day bar
- 2   G  G  G  G  G  G  ·  ·     disks — one pad per drive
- 3   Y  G  G  G  ·  ·  ·  ·     filesystems — / · home · Data-1 · Fast-1
+ 2   ·  G  G  G  G  G  G  ·     disks — one pad per drive, centred
+ 3   ·  ·  Y  G  G  G  ·  ·     filesystems — / · home · Data-1 · Fast-1
  4   ·  ·  ·  ·  ·  ·  ·  ·
- 5   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
+ 5   b  b  b  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
  6   ·  ·  ·  ·  ·  ·  ·  ·
  7   B  W  ·  W  R  W  S  W     speakers · headset | sub · effects · prev play next
 ```
@@ -113,7 +113,7 @@ Everything above the bottom row is read-only:
 |---|---|
 | disks | green in sync, amber rebuilding or in a degraded array, strobing red failed |
 | filesystems | green with room to spare, yellow getting full, red nearly full |
-| temperatures | green normal, yellow warm, red hot, strobing red too hot |
+| temperatures | pale blue normal, yellow warm, red hot, strobing red too hot |
 
 A pad is a whole drive, not an array member, since several arrays can share a
 pair of drives and it is the drive that dies. A drive that has vanished entirely
@@ -144,6 +144,11 @@ closes the EasyEffects window if you have one open.** Any invocation of its CLI
 does, there is no quieter way to ask, and its config file is written too lazily
 to use instead. Switching to another tab stops it on the press — not after a
 delay, which would spend one more window on someone who had already left.
+
+Most pads use the Launchpad's own 128-colour palette, which a note can name
+directly. The pale blue of a normal temperature is not in it, so that pad is
+lit with the lighting SysEx instead — seven bits per channel, any colour the
+LEDs can make. `TEMP_OK` in `bin/launchpad-pomodoro` is the triple.
 
 ## Spectrum
 
@@ -278,7 +283,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 380 tests, about ten seconds
+tests/run-tests             # 389 tests, about ten seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

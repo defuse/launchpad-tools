@@ -23,7 +23,17 @@ def mach(board, mod):
 
 def row(board, mod, r):
     lit = board.out.lit()
-    return [lit.get(mod.pad(r, c)) for c in range(mod.CELLS)]
+    rgb = {}
+    for msg in board.out.sent:                      # RGB pads arrive as sysex
+        if msg.type == 'sysex' and tuple(msg.data[:7]) == mod.SYSEX_RGB:
+            rgb[msg.data[7]] = tuple(msg.data[8:11])
+    return [rgb.get(mod.pad(r, c), lit.get(mod.pad(r, c))) for c in range(mod.CELLS)]
+
+
+def middle(board, mod, r, n):
+    """The n indicators of a centred row, without the dark pads either side."""
+    first = mod.centred(n)
+    return row(board, mod, r)[first:first + n]
 
 
 def show(board, mod, snap, r, paint=None):
@@ -95,9 +105,27 @@ md2 : active raid1 sdf2[1](F) sdd2[0]
 def test_disk_row_colours(mach, mod):
     snap = mod.Snapshot(disks=(('sda', 'ok'), ('sdb', 'sync'), ('sdc', 'fail')))
     painted = show(mach, mod, snap, mod.DISK_ROW)
-    assert painted[:2] == [mod.DISK_OK, mod.DISK_SYNC]
-    assert painted[2] in (mod.DISK_FAIL, mod.OFF), 'a failure strobes'
-    assert painted[3:] == [mod.OFF] * 5
+    drives = painted[mod.centred(3):mod.centred(3) + 3]
+    assert drives[:2] == [mod.DISK_OK, mod.DISK_SYNC]
+    assert drives[2] in (mod.DISK_FAIL, mod.OFF), 'a failure strobes'
+    assert painted.count(mod.OFF) >= 5, 'the rest of the row is dark'
+
+
+@pytest.mark.parametrize('n,first', [(6, 1), (4, 2), (3, 2), (8, 0), (1, 3)])
+def test_indicators_are_centred(mod, n, first):
+    """Six drives left-aligned read as a bar that stopped part way."""
+    assert mod.centred(n) == first
+
+
+def test_the_disks_and_filesystems_sit_in_the_middle(mach, mod):
+    disks = tuple((f'sd{c}', 'ok') for c in 'abcdef')          # six drives
+    painted = show(mach, mod, mod.Snapshot(disks=disks), mod.DISK_ROW)
+    assert painted[0] == mod.OFF and painted[7] == mod.OFF
+    assert painted[1:7] == [mod.DISK_OK] * 6
+    mounts = tuple((m, 900) for m in mod.MOUNTS)               # four filesystems
+    painted = show(mach, mod, mod.Snapshot(mounts=mounts), mod.FS_ROW)
+    assert painted[:2] == [mod.OFF] * 2 and painted[6:] == [mod.OFF] * 2
+    assert painted[2:6] == [mod.GREEN] * 4
 
 
 # ---- filesystems ---------------------------------------------------------
@@ -108,13 +136,15 @@ def test_disk_row_colours(mach, mod):
 ])
 def test_filesystem_colours_by_room_left(mach, mod, free, colour):
     snap = mod.Snapshot(mounts=((mod.MOUNTS[0], free),))
-    assert show(mach, mod, snap, mod.FS_ROW)[0] == getattr(mod, colour)
+    show(mach, mod, snap, mod.FS_ROW)
+    assert middle(mach, mod, mod.FS_ROW, 1) == [getattr(mod, colour)]
 
 
 def test_a_filesystem_that_is_not_there_strobes(mach, mod):
     """All four are always mounted, so a missing one is news, not a blank."""
     snap = mod.Snapshot(mounts=((mod.MOUNTS[0], None),))
-    assert show(mach, mod, snap, mod.FS_ROW)[0] in (mod.RED, mod.OFF)
+    show(mach, mod, snap, mod.FS_ROW)
+    assert middle(mach, mod, mod.FS_ROW, 1)[0] in (mod.RED, mod.OFF)
 
 
 def test_the_readme_still_names_what_this_tab_assumes(mod):
@@ -148,11 +178,34 @@ def test_thresholds_are_per_part(mod):
 
 
 @pytest.mark.parametrize('temp,colour', [
-    (40, 'GREEN'), (69, 'GREEN'), (70, 'YELLOW'), (84, 'YELLOW'), (85, 'RED'), (94, 'RED'),
+    (40, 'TEMP_OK'), (69, 'TEMP_OK'), (70, 'YELLOW'), (84, 'YELLOW'), (85, 'RED'), (94, 'RED'),
 ])
 def test_cpu_temperature_colours(mach, mod, temp, colour):
     snap = mod.Snapshot(temps=((mod.SENSORS[0], temp),))
     assert show(mach, mod, snap, mod.TEMP_ROW)[0] == getattr(mod, colour)
+
+
+def test_a_normal_temperature_is_a_colour_the_palette_does_not_have(mach, mod):
+    """Sent as RGB rather than a palette index: pale blue, so the row does not
+    read as one more meter reporting good news in green."""
+    assert isinstance(mod.TEMP_OK, tuple) and len(mod.TEMP_OK) == 3
+    assert all(0 <= v <= 127 for v in mod.TEMP_OK), 'seven bits per channel'
+    r, g, b = mod.TEMP_OK
+    assert b > g > r, 'blue, and pale'
+    snap = mod.Snapshot(temps=((mod.SENSORS[0], 40),))
+    assert show(mach, mod, snap, mod.TEMP_ROW)[0] == mod.TEMP_OK
+
+
+def test_an_rgb_colour_goes_out_as_a_lighting_sysex(board, mod, out):
+    board.set(mod.pad(3, 4), (80, 110, 127))
+    sysex = [m for m in out.sent if m.type == 'sysex']
+    assert len(sysex) == 1
+    assert tuple(sysex[0].data) == mod.SYSEX_RGB + (mod.pad(3, 4), 80, 110, 127)
+
+
+def test_a_palette_colour_still_goes_out_as_a_note(board, mod, out):
+    board.set(mod.pad(3, 4), mod.GREEN)
+    assert [m.type for m in out.sent] == ['note_on']
 
 
 def test_an_abnormal_temperature_strobes(mach, mod):

@@ -111,6 +111,10 @@ from typing import Callable, NamedTuple
 # ---- hardware -------------------------------------------------------------
 SYSEX_PROGRAMMER = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01]
 SYSEX_LIVE       = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x00]
+# Lighting SysEx, RGB form: header, then 03 <pad> <r> <g> <b>, 0-127 each.
+# A note_on can only name one of the palette's 128 entries; this can ask for
+# any colour the LEDs can make.
+SYSEX_RGB        = (0x00, 0x20, 0x29, 0x02, 0x0D, 0x03, 0x03)
 CH_STATIC, CH_FLASH, CH_PULSE = 0, 1, 2      # MIDI channels select the mode
 
 # The Launchpad's own flash is a fixed 50% duty cycle locked to its internal
@@ -336,6 +340,11 @@ class Sensor(NamedTuple):
     hwmon: str                             # /sys/class/hwmon name to look for
     label: str                             # which tempN_label under it
 
+
+# Normal is a pale blue the palette does not contain, sent as RGB: the meters
+# either side of it are already green, and a row that is green when it is fine
+# looks like one more thing reporting good news rather than a temperature.
+TEMP_OK = (80, 110, 127)
 
 SENSORS = (
     Sensor('cpu',  70, 85,  95, 'k10temp', 'Tctl'),
@@ -611,6 +620,15 @@ def channel_volumes(sink):
         return ()
     return tuple(int(v) for v in
                  re.findall(r'aux\d+:\s+(\d+)', sh('pactl', 'get-sink-volume', sink)))
+
+
+def centred(n):
+    """Column the first of `n` indicators sits at, centred across the row.
+
+    Six drives or four filesystems left-aligned read as a bar that has stopped
+    part way; centred, they read as a set of that size.
+    """
+    return max(0, (CELLS - n) // 2)
 
 
 def sub_muted(volumes):
@@ -1197,10 +1215,21 @@ class Board:
 
     # --- drawing -----------------------------------------------------------
     def set(self, p, colour, channel=CH_STATIC):
+        """Light one pad. `colour` is a palette index, or an (r, g, b) triple.
+
+        The palette is 128 fixed entries, which is all a note_on can carry. The
+        lighting SysEx takes 7 bits per channel instead, so a colour the
+        palette does not contain -- a paler blue than any of its blues, say --
+        is still available; it just costs a longer message.
+        """
         if self.shown.get(p) == (channel, colour):
             return                              # don't spam unchanged pads
         self.shown[p] = (channel, colour)
-        self.out.send(mido.Message('note_on', channel=channel, note=p, velocity=colour))
+        if isinstance(colour, tuple):
+            self.out.send(mido.Message('sysex', data=SYSEX_RGB + (p,) + colour))
+        else:
+            self.out.send(mido.Message('note_on', channel=channel, note=p,
+                                       velocity=colour))
 
     def flash(self, p, colour, on=FLASH_ON, off=FLASH_OFF):
         period = on + off
@@ -1325,27 +1354,31 @@ class Board:
         self.flash(p, colour, 2 * TICK, 2 * TICK)
 
     def render_disks(self, snap):
-        """One pad per physical disk: green in sync, amber rebuilding or in a
-        degraded array, strobing red failed."""
+        """One pad per physical disk, centred: green in sync, amber rebuilding
+        or in a degraded array, strobing red failed."""
+        first = centred(len(snap.disks))
         for c in range(CELLS):
             p = pad(DISK_ROW, c)
-            if c >= len(snap.disks):
+            i = c - first
+            if not 0 <= i < len(snap.disks):
                 self.set(p, OFF)
-            elif snap.disks[c][1] == 'fail':
+            elif snap.disks[i][1] == 'fail':
                 self.alarm(p, DISK_FAIL)
             else:
-                self.set(p, DISK_SYNC if snap.disks[c][1] == 'sync' else DISK_OK)
+                self.set(p, DISK_SYNC if snap.disks[i][1] == 'sync' else DISK_OK)
 
     def render_filesystems(self, snap):
         """One pad per filesystem, by how much room is left on it. A mount that
         cannot be read at all strobes: these four are always mounted, so a
         missing one is news."""
+        first = centred(len(snap.mounts))
         for c in range(CELLS):
             p = pad(FS_ROW, c)
-            if c >= len(snap.mounts):
+            i = c - first
+            if not 0 <= i < len(snap.mounts):
                 self.set(p, OFF)
                 continue
-            free = snap.mounts[c][1]
+            free = snap.mounts[i][1]
             if free is None:        self.alarm(p)
             elif free < FS_CRIT:    self.set(p, RED)
             elif free < FS_LOW:     self.set(p, YELLOW)
@@ -1364,7 +1397,7 @@ class Board:
             elif t >= sensor.panic:  self.alarm(p)
             elif t >= sensor.hot:    self.set(p, RED)
             elif t >= sensor.warm:   self.set(p, YELLOW)
-            else:                    self.set(p, GREEN)
+            else:                    self.set(p, TEMP_OK)
 
     def render_controls(self, snap):
         """Output, sub, effects and transport, across their two rows. Every one
