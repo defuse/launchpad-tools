@@ -66,7 +66,9 @@ DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim va
 
 # mode row: one colour per mode; the SELECTED mode shows white instead
 MAGENTA, ORANGE, PINK = 53, 9, 57
-TAB_SELECTED = PINK                  # tabs are white; the selected one is pink
+SKY = 37
+TAB_SELECTED = SKY                   # tabs are white; the selected one is sky blue
+HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
 
 # Tab column -> mode. Columns 3-5 are deliberately empty, and column 7 is the
 # reset pad, so modes are addressed by the column they sit on rather than by
@@ -345,9 +347,8 @@ class Board:
             elif c in TABS and not lit:            col = TAB_SELECTED if c == self.mode else WHITE
             else:                                  col = OFF
             self.set(pad(FUNC_ROW, c), col)
-        if held_for >= RESET_HOLD:
-            self.reset()
-            self.held.pop(pad(FUNC_ROW, RESET_COL), None)
+        # the fill is feedback only -- reset itself fires on release, in
+        # release(), so one pad can serve both a tap and a hold
 
         if self.mode == M_SYS:
             self.render_sys()
@@ -558,6 +559,17 @@ class Board:
         got = self.held.pop(note, None)
         cycles = self._hold_count.pop(note, 0)   # always drop it; it leaked when
                                                  # a pad was let go on another tab
+
+        if note == pad(FUNC_ROW, RESET_COL) and got is not None:
+            # One pad, two jobs, told apart purely by how long it was down:
+            # a quick tap dismisses the habit window, a 2s hold resets the tab.
+            if time.time() - got[0] >= RESET_HOLD:
+                self.reset()
+            elif self._editing:
+                self._popup_cmd('hide')
+                self._editing = None
+            return
+
         if got is None or self.mode not in HAB_MODES:
             return
         if got[1] != self.mode:
@@ -639,7 +651,7 @@ class Board:
         whatever mode happened to be selected."""
         return self.habit_table(self.mode)
 
-    HAB_STATE_COLOUR = {1: RED, 2: GREEN}      # 0 falls back to the habit's colour
+    HAB_STATE_COLOUR = {2: GREEN}              # 0 and 1 are handled in render_habits
 
     def habit(self, r, c, mode=None):
         tbl = self.habits if mode is None else self.habit_table(mode)
@@ -665,10 +677,16 @@ class Board:
         for r in HAB_ROWS:
             for c in range(CELLS):
                 h = self.habit(r, c)
+                own = h.get('colour', WHITE)
                 if not h['name']:
                     col = OFF                  # a habit with no name does not exist
+                elif h.get('state', 0) == 1:
+                    # in progress: alternate red and the habit's own colour, so a
+                    # started habit is the only thing on the board that moves and
+                    # still shows which habit it is
+                    col = RED if int(time.time() / HAB_FLASH) % 2 else own
                 else:
-                    col = self.HAB_STATE_COLOUR.get(h.get('state', 0), h.get('colour', WHITE))
+                    col = self.HAB_STATE_COLOUR.get(h.get('state', 0), own)
                 self.set(pad(r, c), col)
 
     def edit_habit(self, r, c):
