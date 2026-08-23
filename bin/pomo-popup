@@ -107,7 +107,7 @@ class Window:
         self.outer = outer
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
         self.row_lefts = {}
-        self.slots, self.entries, self.vars = {}, {}, {}
+        self.slots, self.entries = {}, {}
         self.root.bind_all('<Escape>', lambda ev: (self.close(), 'break')[1])
         self.root.withdraw()
 
@@ -138,7 +138,7 @@ class Window:
             child.destroy()
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
         self.row_lefts = {}
-        self.slots, self.entries, self.vars = {}, {}, {}
+        self.slots, self.entries = {}, {}
 
         line = 0
         for info in self.rows:
@@ -180,26 +180,32 @@ class Window:
                  fg=MUTED, bg=BG, anchor='e').grid(row=line, column=0,
                                                    sticky='e', padx=(0, 14))
         for c in range(COLS):
-            f = tk.Frame(self.outer, bg=CELL_BG, width=SLOT_W, height=TODO_H - 16,
+            # no fixed height and propagation left on: the slot is as tall as
+            # its text box, and every box is set to the same number of lines,
+            # so the row is one block however long the longest item is
+            f = tk.Frame(self.outer, bg=CELL_BG,
                          highlightthickness=4, highlightbackground=BG)
-            f.grid(row=line, column=2 + c, padx=4, pady=4)
-            f.grid_propagate(False)
+            f.grid(row=line, column=2 + c, padx=4, pady=4, sticky='nsew')
             self.slots[c] = f
-            handle = tk.Label(f, text='⠿', font=('DejaVu Sans', 15), fg=MUTED,
+            handle = tk.Label(f, text='⠿', font=('DejaVu Sans', 13), fg=MUTED,
                               bg=CELL_BG, cursor='fleur')
-            handle.pack(anchor='nw', padx=8, pady=(6, 0))
-            var = tk.StringVar()
-            self.vars[c] = var
-            e = tk.Entry(f, textvariable=var, font=('DejaVu Sans', 17, 'bold'),
-                         bg=CELL_BG, fg=WHITE, insertbackground=WHITE,
-                         relief='flat', justify='center', width=9)
-            e.pack(expand=True, padx=8)
+            handle.pack(anchor='nw', padx=8, pady=(4, 0))
+            # a Text, not an Entry: an Entry is one line and scrolls sideways,
+            # which hides the end of anything that does not fit
+            e = tk.Text(f, font=('DejaVu Sans', 12, 'bold'), bg=CELL_BG, fg=WHITE,
+                        insertbackground=WHITE, relief='flat', width=13, height=1,
+                        wrap='word', spacing1=1, spacing3=1, padx=6, pady=2,
+                        highlightthickness=0, cursor='xterm')
+            e.pack(fill='x', padx=4, pady=(0, 6))
             self.entries[c] = e
-            var.trace_add('write', lambda *a, col=c: self.name_typed(col))
+            e.bind('<KeyRelease>', lambda ev, col=c: self.name_typed(col))
+            # a name is one line of text; the box is multiline so it can wrap,
+            # not so it can hold paragraphs, and the protocol is line based
+            e.bind('<Return>', lambda ev: 'break')
             # The frame and the handle are the pad; the entry is the text box.
             # Clicking into the text to type is not a press of anything, which
             # is why the entry only takes the drag bindings and never the tap.
-            for w in (f, handle, e):
+            for w in (f, handle, e):  # noqa: E501 -- see grab() for which is which
                 w.bind('<Button-1>', lambda ev, col=c: self.grab(col, ev), add='+')
                 w.bind('<B1-Motion>', lambda ev, col=c: self.drag(ev, col), add='+')
                 w.bind('<ButtonRelease-1>', lambda ev, col=c: self.drop(ev), add='+')
@@ -227,9 +233,12 @@ class Window:
                 self.slots[c].configure(bg=bg)
                 for w in self.slots[c].winfo_children():
                     w.configure(bg=bg)
-                if self.vars[c].get() != slot.get('name', ''):
-                    self.vars[c].set(slot.get('name', ''))
-                self.entries[c].configure(fg=WHITE if slot.get('name') else MUTED)
+                box = self.entries[c]
+                if box.get('1.0', 'end').strip() != slot.get('name', ''):
+                    box.delete('1.0', 'end')
+                    box.insert('1.0', slot.get('name', ''))
+                box.configure(fg=WHITE if slot.get('name') else MUTED, bg=bg)
+            self.fit_slots()
         finally:
             self._painting = False
 
@@ -237,9 +246,33 @@ class Window:
     def name_typed(self, col):
         if self._painting:
             return
-        name = re.sub(r'\s+', ' ', self.vars[col].get()).strip()
+        name = re.sub(r'\s+', ' ', self.entries[col].get('1.0', 'end')).strip()
         self.todo[col]['name'] = name
+        self.fit_slots()
         say(f'set\t{col}\t{name}')
+
+    def fit_slots(self):
+        """Every box as tall as the tallest one needs to be.
+
+        Tk counts the lines a Text actually displays after wrapping, which is
+        the only honest answer -- the alternative is dividing characters by a
+        guessed width and being wrong for every proportional font. Growing them
+        all together keeps the row a row rather than a skyline.
+        """
+        if self.root.state() == 'withdrawn':
+            return                             # Tk cannot count what it is not drawing
+        self.root.update_idletasks()
+        need = 1
+        for t in self.entries.values():
+            try:
+                n = t.count('1.0', 'end - 1c', 'displaylines')
+                n = n[0] if isinstance(n, tuple) else int(n or 1)
+            except Exception:
+                n = 1
+            need = max(need, n or 1)
+        for t in self.entries.values():
+            if int(t.cget('height')) != need:
+                t.configure(height=need)
 
     def clear(self):
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
@@ -327,9 +360,14 @@ class Window:
             self.root.lift()
             self.root.attributes('-topmost', True)
             self.root.update_idletasks()
+            # only now can Tk say how many lines a box actually displays: a
+            # withdrawn window answers None, which would leave every box one
+            # line tall with the rest of the text out of sight
+            self.fit_slots()
             self.fit()
             for ms in (120, 600):
                 self._fits.append(self.root.after(ms, self.fit))
+                self._fits.append(self.root.after(ms, self.fit_slots))
         elif p[0] == 'hide':
             self.hide()
 

@@ -97,7 +97,9 @@ abandons a timer exactly as it does on the board. Clicking into a todo text box
 to type is not a press.
 
 The todo list is edited here — type a name, click a slot to cycle its state,
-drag a slot to move it. A drag is a *move*, not a swap: everything between the slot
+drag a slot to move it. The name boxes wrap like a text editor and every one of
+them is as tall as the longest item needs, so nothing scrolls and nothing is
+hidden. A drag is a *move*, not a swap: everything between the slot
 and where it lands shifts by one, in whichever direction that turns out to be,
 and each slot carries its own state along with it. `clear list` empties them
 all.
@@ -332,7 +334,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 467 tests, about fifteen seconds
+tests/run-tests             # 474 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
