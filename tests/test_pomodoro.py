@@ -1,4 +1,5 @@
 """The pomodoro state machine, the hold-to-abandon timer and reset scoping."""
+import json
 import pytest
 from lpharness import FakeOut, new_board
 
@@ -601,3 +602,78 @@ def test_the_window_can_clear_the_list(mirror, mod):
     mirror.todo[0] = {'name': 'a', 'state': 1}
     feed_pomo(mirror, ['clear'])
     assert mirror.todo == mod.blank_todo()
+
+
+def test_the_row_labels_carry_the_length(mirror, mod):
+    sent = [l for l in mirror._pomo_popup.sent() if l.startswith('data\t')]
+    rows = json.loads(sent[-1].split('\t', 1)[1])['rows']
+    names = [r['name'] for r in rows]
+    assert names[0] == 'timer 1 (24 min)'
+    assert names[-1] == 'break (8 min)'
+
+
+def test_the_window_is_sent_the_colours_the_pads_are_showing(mirror, mod, clock):
+    """Not a second computation of them: the blinking cell of a running timer
+    blinks in the window in step, and the red fill of a hold crawls across both
+    at once, because one thing decides either."""
+    mirror.rows[ROW] = {'state': mod.RUNNING, 'started': clock.time() - mod.POMODORO.step}
+    mirror.render()
+    rows = json.loads([l for l in mirror._pomo_popup.sent()
+                       if l.startswith('data\t')][-1].split('\t', 1)[1])['rows']
+    cells = next(r for r in rows if r['row'] == ROW)['cells']
+    lit = mirror.out.lit()
+    assert cells == [mod.PAD_HEX[lit[mod.pad(ROW, c)]] for c in range(mod.CELLS)]
+
+
+def test_a_hold_shows_in_the_window_as_it_fills(mirror, mod, clock):
+    mirror.rows[ROW] = {'state': mod.RUNNING, 'started': clock.time()}
+    mirror.press(col0(mod, ROW))
+    clock.advance(1.0)                                   # half way through the hold
+    mirror.render()
+    rows = json.loads([l for l in mirror._pomo_popup.sent()
+                       if l.startswith('data\t')][-1].split('\t', 1)[1])['rows']
+    cells = next(r for r in rows if r['row'] == ROW)['cells']
+    assert cells.count(mod.PAD_HEX[mod.RED]) > 0, 'the fill is on its way across'
+    assert cells.count(mod.PAD_HEX[mod.RED]) < mod.CELLS, 'and not there yet'
+
+
+# ---- the window follows the tab -----------------------------------------
+
+def test_switching_tabs_swaps_which_window_is_shown(board, mod, clock):
+    board.mode = mod.M_POMO
+    tap(board, mod, clock)
+    assert board._window == mod.M_POMO
+    board.press(mod.pad(mod.FUNC_ROW, mod.M_HAB))
+    assert board._window == mod.M_HAB, 'the habit window took its place'
+    assert 'hide' in board._pomo_popup.sent(), 'and the pomodoro one went away'
+
+
+def test_switching_to_a_tab_without_one_leaves_nothing_up(board, mod, clock):
+    board.mode = mod.M_POMO
+    tap(board, mod, clock)
+    board.press(mod.pad(mod.FUNC_ROW, mod.M_NET))
+    assert board._window is None
+
+
+def test_switching_tabs_with_nothing_open_opens_nothing(board, mod, clock):
+    board.mode = mod.M_POMO
+    board.press(mod.pad(mod.FUNC_ROW, mod.M_HAB))
+    assert board._window is None and board._editing is None
+
+
+def test_the_two_habit_tabs_still_swap_the_table_in_place(hb_board, mod, clock):
+    """Between those two the window stays put; a close and reopen would lose
+    the cell you were looking at."""
+    hb_board.mode = mod.M_HAB
+    tap(hb_board, mod, clock)
+    focused = hb_board._editing
+    hb_board.press(mod.pad(mod.FUNC_ROW, mod.M_HAB2))
+    assert hb_board._editing == focused
+    assert 'hide' not in hb_board._popup.sent()
+
+
+@pytest.fixture
+def hb_board(board, mod):
+    board.habit_sets['1'] = {'2,0': {'name': 'a', 'colour': 3, 'state': 0}}
+    board.habit_sets['2'] = {'2,0': {'name': 'b', 'colour': 3, 'state': 0}}
+    return board

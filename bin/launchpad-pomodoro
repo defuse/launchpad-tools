@@ -1244,25 +1244,18 @@ class Board:
         """Mirror the pomodoro tab into the window, if it is open."""
         if self._window != M_POMO:
             return
-        now = time.time()
         rows = []
-        for r in TIMER_ROWS:
-            st = self.rows[r]
+        for i, r in enumerate(TIMER_ROWS):
             t = TIMERS[r]
-            done = (min(int((now - st['started']) // t.step), CELLS - 1)
-                    if st['state'] == RUNNING else 0)
-            cells = []
-            for c in range(CELLS):
-                if st['state'] == RUNNING:
-                    cells.append(PAD_HEX[t.fill] if c <= done else PAD_HEX[OFF])
-                elif st['state'] == ELAPSED:
-                    cells.append(PAD_HEX[t.fill if c == CELLS - 1 else RED])
-                elif st['state'] == CLAIMED:
-                    cells.append(PAD_HEX[t.fill])
-                else:
-                    cells.append(PAD_HEX[t.idle] if c == 0 else PAD_HEX[OFF])
-            rows.append({'row': r, 'name': 'break' if r == BREAK_ROW else f'timer {r - 1}',
-                         'state': st['state'], 'cells': cells})
+            # whatever is on the pads this instant, read back rather than
+            # recomputed: the blinking cell blinks in the window in step with
+            # the board, and the red fill of a hold-to-abandon crawls across
+            # both at once, because there is only one thing deciding either
+            cells = [PAD_HEX.get(self.shown.get(pad(r, c), (0, OFF))[1], '#191920')
+                     for c in range(CELLS)]
+            name = 'break' if r == BREAK_ROW else f'timer {i + 1}'
+            rows.append({'row': r, 'name': f'{name} ({t.length // 60} min)',
+                         'state': self.rows[r]['state'], 'cells': cells})
         blob = json.dumps({'rows': rows, 'todo': self.todo})
         if blob == self._pomo_sent:
             return                           # the frame has not changed; the
@@ -2034,19 +2027,27 @@ class Board:
         lr, lc = got
         if lr == FUNC_ROW:
             if lc in TABS:                     # reset pad is hold-only, see render()
-                self.mode = lc
+                was, self.mode = self.mode, lc
                 if lc != M_MACH:
                     self.machine.leave()       # stop querying EasyEffects now
-                if self._editing:
-                    if lc in HAB_MODES:
-                        # window follows the tab: swap the whole table
-                        self._popup_mode = lc
-                        self._popup_send_table('load')
-                        er, ec = self._editing
-                        self._popup_cmd(f'focus\t{er}\t{ec}')
-                    else:
-                        self._popup_cmd('hide')   # left the habit tabs
+                if was in HAB_MODES and lc in HAB_MODES and self._editing:
+                    # between the two habit tabs the window stays put and swaps
+                    # the whole table; a merge would leave the other tab's
+                    # habits behind
+                    self._popup_mode = lc
+                    self._popup_send_table('load')
+                    er, ec = self._editing
+                    self._popup_cmd(f'focus\t{er}\t{ec}')
+                elif self._window is not None or self._editing:
+                    # something was on screen, so the new tab's window takes its
+                    # place -- or nothing does, on a tab that has none. The
+                    # habit window can be up from a held pad rather than from
+                    # the red one, which is why _editing counts as open too.
+                    if self._editing:
+                        self._popup_cmd('hide')
                         self._editing = None
+                    self.close_window()
+                    self.toggle_window()
             return
         widget = widget_at(self.mode, lr)
         if widget is Widget.HABIT:

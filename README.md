@@ -96,6 +96,14 @@ holding one holds it, through the same code — so a two-second hold in the wind
 abandons a timer exactly as it does on the board. Clicking into a todo text box
 to type is not a press.
 
+The colours are read back off the pads rather than worked out again, so the
+blinking cell of a running timer blinks here in step with the board, and the red
+fill of a hold-to-abandon crawls across both at once. Each row is labelled with
+its length.
+
+**Switching tabs switches the window.** Whatever was on screen closes and the
+new tab's window opens in its place — or nothing does, on a tab that has none.
+
 The todo list is edited here — type a name, click a slot to cycle its state,
 drag a slot to move it. The name boxes wrap like a text editor and every one of
 them is as tall as the longest item needs, so nothing scrolls and nothing is
@@ -334,7 +342,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 474 tests, about fifteen seconds
+tests/run-tests             # 487 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
