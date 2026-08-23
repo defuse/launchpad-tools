@@ -116,13 +116,23 @@ def row_style(r):
     its length and palette differ, so there is one implementation rather than
     two that can drift apart."""
     if r == BREAK_ROW:
-        return BREAK_SECS_PER_CELL, SKY, BLUE
+        return BREAK_SECS_PER_CELL, BLUE, BLUE
     return SECS_PER_CELL, WHITE, GREEN
 
 def row_chime(r):
     """Which chime a row plays when it elapses. Four strikes for the break and
     three for a pomodoro, so you can tell which one ended without looking."""
     return 'break.wav' if r == BREAK_ROW else 'finish.wav'
+
+BREAK_WARN_AT = 6 * 60                        # two minutes left of an 8 min break
+
+def row_warn(r):
+    """(seconds in, chime) for a one-shot warning part way through a row, or
+    None. Higher and quicker than the end chimes so it cannot be mistaken for
+    the timer actually finishing."""
+    if r == BREAK_ROW:
+        return BREAK_WARN_AT, 'break-warn.wav'
+    return None
 STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
 SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
 PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
@@ -452,7 +462,17 @@ class Board:
         for r in TIMER_ROWS:
             st = self.rows[r]
             secs, _, _ = row_style(r)
-            if st['state'] == RUNNING and (now - st['started']) >= CELLS * secs:
+            if st['state'] != RUNNING:
+                continue
+            elapsed = now - st['started']
+            warn = row_warn(r)
+            if warn and not st.get('warned') and elapsed >= warn[0]:
+                # flag persisted with the row, so a restart mid-break does not
+                # replay a warning you have already heard
+                st['warned'] = True
+                self.save()
+                ding(warn[1])
+            if elapsed >= CELLS * secs:
                 st['state'] = ELAPSED
                 self.save()
                 ding(row_chime(r))
@@ -729,7 +749,9 @@ class Board:
     def pomo_press(self, r, c):
         st = self.rows[r]; s = st['state']
         if s == IDLE and c == 0:
-            st.update(state=RUNNING, started=time.time())
+            # warned=False matters: update() keeps existing keys, so without it
+            # a second break would inherit the first one's spent warning flag
+            st.update(state=RUNNING, started=time.time(), warned=False)
             ding('start.wav')
         elif s == ELAPSED:
             if c == CELLS - 1: st['state'] = CLAIMED       # claimed it
