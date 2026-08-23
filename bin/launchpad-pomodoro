@@ -618,35 +618,63 @@ class Machine:
     AUDIO, EFFECTS, TEMPS, DISKS = 1.0, 5.0, 5.0, 30.0
     PRESET = 1.0                       # how often, while the tab is on screen
     PRESET_IDLE = 3.0                  # stop asking this long after the last frame
+    SETTLE = 0.35                      # let a press land before reading it back
 
     def __init__(self):
         self.snap = Snapshot()
         self.watched = 0.0             # when the tab was last drawn
+        self.recheck_at = 0.0          # a press is waiting to be read back
+        self._due = {}                 # job -> when it last ran
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
 
-    def _loop(self):
-        due = {}
-        jobs = (('easyeffects', self.PRESET, self.read_easyeffects),
+    def jobs(self):
+        return (('easyeffects', self.PRESET, self.read_easyeffects),
                 ('audio', self.AUDIO, self.read_audio),
                 ('effects', self.EFFECTS, self.read_effects),
                 ('temps', self.TEMPS, self.read_temps),
                 ('disks', self.DISKS, self.read_disks))
+
+    def _run(self, key, read, now):
+        self._due[key] = now
+        try:
+            read()
+        except Exception as e:
+            print(f'machine {key}: {e!r}', flush=True)
+
+    def poll_once(self, now=None):
+        """One pass of the poller. Split out so it can be tested."""
+        now = now if now is not None else time.time()
+        if self.recheck_at and now >= self.recheck_at:
+            # a press is waiting to be read back: the two readers that can see
+            # what it did, ahead of their own cadence
+            self.recheck_at = 0.0
+            self._run('audio', self.read_audio, now)
+            self._run('easyeffects', self.read_easyeffects, now)
+        for key, every, read in self.jobs():
+            if now - self._due.get(key, 0.0) >= every:
+                self._run(key, read, now)
+
+    def _loop(self):
         while True:
-            now = time.time()
-            for key, every, read in jobs:
-                if now - due.get(key, 0.0) >= every:
-                    due[key] = now
-                    try:
-                        read()
-                    except Exception as e:
-                        print(f'machine {key}: {e!r}', flush=True)
+            self.poll_once()
             time.sleep(0.25)
 
+    def recheck(self, delay=SETTLE):
+        """A press has been fired off; read the result back shortly.
+
+        Nothing on the control row assumes its own press worked. The pads show
+        what pactl and EasyEffects say, always, so a command that fails or is
+        overridden a moment later cannot leave the board asserting something
+        that is not true. The delay is for the command to land: it is fired and
+        forgotten, and pactl and EasyEffects both take a moment to act on it.
+        """
+        self.recheck_at = time.time() + delay
+
     def assume(self, **kw):
-        """Show a change straight away; the next poll confirms or corrects it.
-        A button that waits a second to light up feels broken."""
+        """Record what was just read. Never used to record what was just asked
+        for -- see recheck()."""
         self.snap = self.snap._replace(**kw)
 
     # ---- readers ---------------------------------------------------------
@@ -740,7 +768,7 @@ class Machine:
             spawn('easyeffects', '--gapplication-service')
         elif self.snap.running:
             spawn('easyeffects', '-b', '1' if not on else '2')
-        self.assume(effects=on)
+        self.recheck()                 # read back what it did, never assume
 
     def toggle_effects(self):
         self.set_effects(not self.snap.effects)
@@ -1242,9 +1270,14 @@ class Board:
                 self.set(p, PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE)
 
     def control_press(self, col):
-        """Act on the control row. Every action is fired and forgotten, and the
-        snapshot is updated optimistically -- a button that takes a poll to
-        light up feels broken -- with the next read confirming or correcting."""
+        """Act on the control row.
+
+        Every action is fired and forgotten, and then read back: a press
+        schedules a re-read rather than recording what it asked for, so the
+        pads show what pactl and EasyEffects say and nothing else. Assuming a
+        press worked is how the pad came to sit on green while EasyEffects was
+        bypassed -- the board asserting a state instead of reporting one.
+        """
         b = CONTROLS[col] if col < len(CONTROLS) else None
         snap = self.machine.snap
         if b is None:
@@ -1266,15 +1299,15 @@ class Board:
             # itself. Bypassing for the headset -- which is what this did
             # before there was a headset preset -- would make that preset
             # unreachable from the board.
-            self.machine.assume(sink=name)
+            self.machine.recheck()
         elif b.kind == 'effects':
-            self.machine.toggle_effects()
+            self.machine.toggle_effects()                  # recheck()s itself
         else:
             spawn('gdbus', 'call', '--session', '--dest', SPOTIFY,
                   '--object-path', '/org/mpris/MediaPlayer2',
                   '--method', f'org.mpris.MediaPlayer2.Player.{b.arg}')
             if b.arg == 'PlayPause':
-                self.machine.assume(playing=not snap.playing)
+                self.machine.recheck()
 
     def render_timers(self):
         """Every timer row on the pomodoro tab, each its own progress bar."""

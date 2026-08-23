@@ -136,6 +136,11 @@ asks anyway: a pad that quietly disagrees with the UI is worse than a window
 that shuts, which is at least obvious and stops the moment you leave the tab.
 Nobody looking means nobody asking, so it costs nothing on any other tab.
 
+Pressing a control pad never updates the display. It fires the command off and
+schedules a read-back, so what you see is always what pactl and EasyEffects
+say — a press that fails, or that something else overrides a moment later,
+cannot leave the board asserting a state it only asked for.
+
 All of it comes from a background poller. Nothing is read during a frame:
 `easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
 query is never polled at all, in fact — it starts a second EasyEffects to ask
@@ -197,7 +202,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 354 tests, about nine seconds
+tests/run-tests             # 356 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

@@ -261,9 +261,13 @@ def test_switching_output_leaves_easyeffects_alone(mach, mod, col):
     assert ran('pactl')[0][1] == 'set-default-sink'
 
 
-def test_the_pad_lights_before_the_poll_catches_up(mach, mod):
+def test_a_press_schedules_a_read_back_instead_of_assuming(mach, mod):
+    """The pads report what pactl and EasyEffects say, never what the board
+    asked them for. A press that fails, or is overridden a moment later, must
+    not leave the board asserting something untrue."""
     press(mach, mod, 1, audio(mod, sink='game_stereo'))
-    assert mach.machine.snap.sink == SINKS[1]
+    assert mach.machine.snap.sink == 'game_stereo', 'not touched by the press'
+    assert mach.machine.recheck_at > 0, 'a read-back is pending'
 
 
 def test_pressing_an_absent_output_does_nothing_at_all(mach, mod):
@@ -292,14 +296,17 @@ def test_transport_buttons_talk_to_spotify(mach, mod):
 def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, effects, expect):
     press(mach, mod, 3, audio(mod, running=running, effects=effects))
     assert ran('easyeffects') == [expect]
-    assert mach.machine.snap.effects is not effects
+    assert mach.machine.snap.effects is effects, 'unchanged until it is read back'
+    assert mach.machine.recheck_at > 0
 
 
 # ---- asking EasyEffects which preset is loaded ---------------------------
 @pytest.fixture
 def asked(mod, monkeypatch):
     """Record what the poller shells out for, and answer for it."""
-    calls, answers = [], {'easyeffects': 'at headphones\n\n2\n', 'xdotool': ''}
+    calls, answers = [], {'easyeffects': 'at headphones\n\n2\n',
+                          'pgrep': '858705\n',          # EasyEffects is up
+                          'xdotool': ''}
     def fake_sh(*cmd, **kw):
         calls.append(list(cmd))
         return answers.get(cmd[0], '')
@@ -369,12 +376,37 @@ def test_a_press_is_confirmed_by_easyeffects_not_overwritten(mach, mod, asked):
     while the tray showed it off.
     """
     calls, answers = asked
-    answers['easyeffects'] = 'room\n\n1\n'
+    answers['easyeffects'] = 'room\n\n1\n'                 # EasyEffects: bypassed
     mach.machine.assume(running=True, effects=True)
     mach.machine.set_effects(False)
-    assert mach.machine.snap.effects is False
+    assert mach.machine.recheck_at > 0, 'the press asks to be read back'
     looking(mach).read_easyeffects()
-    assert mach.machine.snap.effects is False, 'the poll must confirm, not undo'
+    assert mach.machine.snap.effects is False, 'and the read is what sets it'
+
+
+def test_the_read_back_runs_off_the_poller_thread(mach, mod, asked):
+    """A press must not wait on easyeffects: the thread that reads the pads is
+    the thread that draws them, and the query takes a quarter of a second."""
+    calls, _ = asked
+    m = looking(mach)
+    m.set_effects(False)
+    assert asked_ee(calls) == [], 'nothing queried on the input thread'
+    m.poll_once()
+    assert asked_ee(calls) == [ASK], 'the poller picks it up'
+
+
+def test_the_read_back_does_not_wait_for_the_next_cadence(mach, mod, asked):
+    """Without this the pad sits wrong for up to a second after every press."""
+    calls, _ = asked
+    m = looking(mach)
+    m.poll_once()                                          # everything just ran
+    calls.clear()
+    m.poll_once()                                          # nothing due yet
+    assert asked_ee(calls) == []
+    m.recheck()
+    m.attend(now=m.recheck_at)
+    m.poll_once(now=m.recheck_at)
+    assert asked_ee(calls) == [ASK], 'the press jumps the queue'
 
 
 def test_it_asks_every_time_while_the_tab_is_up(mach, mod, asked):
