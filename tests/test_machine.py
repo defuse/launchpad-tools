@@ -355,33 +355,50 @@ def test_the_sub_pad_shows_whether_it_is_muted(mach, mod, volumes, colour):
     assert painted[2] == getattr(mod, colour)
 
 
-def test_muting_zeroes_only_the_subs_pair(mach, mod, live):
-    """The other eight channels are written back exactly as they were read:
-    pactl takes every channel or none, and the speakers are two of them."""
+def wrote(mod):
+    """The ten channel values the press sent to pactl."""
+    return [int(v) for v in ran('pactl')[0][3:]]
+
+
+def test_the_two_states_leave_the_speakers_at_the_same_loudness(mod):
+    """The interface sums the sub's channels into the speakers, so muting the
+    sub would take 6dB off them. Half plus half is one, and one is one."""
+    half = (mod.SUB_HALF / 65536) ** 3                     # PulseAudio is cubic
+    assert round(half, 3) == 0.5
+    assert round(half + half, 3) == round((mod.SUB_FULL / 65536) ** 3, 3) == 1.0
+
+
+def test_turning_the_sub_off_gives_the_speakers_their_own_full_level(mach, mod, live):
+    live['volumes'] = (mod.SUB_HALF,) * 4 + (0,) * 6       # sub currently on
     press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
-    assert ran('pactl') == [['pactl', 'set-sink-volume',
-                             'alsa_output.usb-TASCAM_SERIES_208i-00.multichannel',
-                             '40000', '40000', '0', '0', '0', '0', '0', '0', '0', '0']]
+    assert wrote(mod)[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0]
 
 
-def test_unmuting_restores_the_level_it_had(mach, mod, live):
-    """Not a fixed number: whatever the sub was set to is the level it is meant
-    to be at."""
-    quiet = (40000, 40000, 31000, 31000, 0, 0, 0, 0, 0, 0)   # sub trimmed down
-    live['volumes'] = quiet
-    press(mach, mod, 2, with_sub(mod, quiet, sink='game_stereo'))
-    assert ran('pactl')[0][5:7] == ['0', '0'], 'muted'
-    live['volumes'] = MUTED
+def test_turning_the_sub_on_halves_everything(mach, mod, live):
+    live['volumes'] = (mod.SUB_FULL, mod.SUB_FULL, 0, 0) + (0,) * 6
     press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
-    assert ran('pactl')[0][5:7] == ['31000', '31000'], 'and given its own level back'
+    assert wrote(mod)[:4] == [mod.SUB_HALF] * 4
 
 
-def test_unmuting_with_nothing_remembered_matches_the_speakers(mach, mod, live):
-    """Muted before this program started: the speakers' level is where those
-    channels sit by default."""
-    live['volumes'] = MUTED
+def test_there_is_nothing_to_remember(mach, mod, live):
+    """Two states, both fixed. A level carried across a mute is a level that
+    can be lost, or restored wrong after a restart."""
+    assert not hasattr(mach.machine, '_sub_level')
+    live['volumes'] = (mod.SUB_HALF,) * 4 + (0,) * 6
+    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    off = wrote(mod)
+    FakePopen.instances.clear()
+    live['volumes'] = tuple(off)
     press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
-    assert ran('pactl')[0][5:7] == ['40000', '40000']
+    on = wrote(mod)
+    assert off[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0]
+    assert on[:4] == [mod.SUB_HALF] * 4, 'straight back, no history involved'
+
+
+def test_the_other_channels_are_left_alone(mach, mod, live):
+    live['volumes'] = (mod.SUB_HALF,) * 4 + (12345,) * 6
+    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    assert wrote(mod)[4:] == [12345] * 6
 
 
 def test_a_stale_snapshot_cannot_write_over_the_speakers(mach, mod, live):
@@ -391,11 +408,12 @@ def test_a_stale_snapshot_cannot_write_over_the_speakers(mach, mod, live):
     caught mid-change by something else -- and the press must not write that.
     """
     live['volumes'] = TEN                                  # what is true now
-    stale = (0, 0, 40000, 40000, 0, 0, 0, 0, 0, 0)         # what the poll saw
+    stale = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)                 # what the poll saw
     press(mach, mod, 2, with_sub(mod, stale, sink='game_stereo'))
-    written = ran('pactl')[0][3:]
-    assert written[:2] == ['40000', '40000'], 'the speakers keep their real level'
-    assert written[2:4] == ['0', '0'], 'and the sub is the only thing muted'
+    written = wrote(mod)
+    assert written[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0], \
+        'acted on the fresh read: the sub was on, so this turns it off'
+    assert written[4:] == list(TEN[4:]), 'and the rest came from the read too'
 
 
 def test_pressing_the_sub_pad_with_no_interface_does_nothing(mach, mod):

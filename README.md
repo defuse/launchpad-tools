@@ -123,9 +123,11 @@ you see in that case is its array's surviving half going amber.
 The bottom row is the only part you can press. The two output pads are white
 with the current one blue; picking the headset takes its microphone with it.
 Next to them the subwoofer pad is white while the sub is passing signal and red
-while it is muted — muting takes its two channels of the interface to zero and
-leaves the other eight alone, and unmuting gives them back the level they had.
-The
+while it is muted. The interface sums the sub's channels into the speakers as
+well, so simply zeroing them would take 6dB off the speakers too; instead the
+pad moves between two fixed levels that leave the speakers at the same
+loudness either way — every channel at half with the sub on, the sub's pair at
+zero and the speakers at full with it off. The
 EasyEffects pad is an on/off switch whose colour says which preset is live:
 white off, green for the room preset, orange for the headset one — worked out
 from EasyEffects' own autoload bindings, so renaming a preset cannot leave the
@@ -275,7 +277,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 373 tests, about nine seconds
+tests/run-tests             # 376 tests, about ten seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

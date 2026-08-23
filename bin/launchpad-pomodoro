@@ -369,7 +369,22 @@ SPOTIFY   = 'org.mpris.MediaPlayer2.spotify'
 # seconds, and not touching the interface itself.
 SUB_SINK = 'TASCAM_SERIES_208i'
 SUB_CHANNELS  = (2, 3)                     # LINE OUT 3/4, the sub's pair
-MAIN_CHANNELS = (0, 1)                     # the speakers, and the level to match
+MAIN_CHANNELS = (0, 1)                     # the speakers' own pair
+# The interface sums the sub's channels into the speakers as well, so the
+# speakers hear both copies -- measured: muting one leaves the other playing at
+# reduced level. Zeroing the sub therefore takes 6dB off the speakers too,
+# unless the two states are picked so the speakers add up to the same either
+# way:
+#
+#   sub on    every channel at half   speakers hear 0.5 + 0.5 = 1.0, sub 0.5
+#   sub off   the sub's pair at zero  speakers hear 1.0 from their own pair
+#
+# Two fixed states and nothing to remember, and the sub keeps exactly the ratio
+# to the speakers it has always had. This is a workaround for that summing: if
+# the interface is ever routed so the speakers hear only their own pair, these
+# two states become wrong and the levels want to be full and full.
+SUB_HALF = 52016                           # PulseAudio's scale is cubic: 0.5 linear
+SUB_FULL = 65536                           # ...and this is 1.0
 # EasyEffects writes its bypass state here the moment it changes, which is the
 # only way to read it that does not touch the application. Asking the CLI
 # (`easyeffects -b 3`) starts a second instance to talk to the first, and that
@@ -665,7 +680,6 @@ class Machine:
         self.watched = 0.0             # when the tab was last drawn
         self.recheck_at = 0.0          # a press is waiting to be read back
         self._due = {}                 # job -> when it last ran
-        self._sub_level = ()           # the sub's level before it was muted
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
@@ -817,14 +831,12 @@ class Machine:
         self.set_effects(not self.snap.effects)
 
     def toggle_sub(self):
-        """Silence the sub's two channels, or give them their level back.
+        """Move between the sub's two states. See SUB_HALF.
 
-        The level restored is the one they had when they were muted, not a
-        fixed number and not the mains': that is the level the sub is meant to
-        be at, and nothing else on the system writes these channels, so it
-        stays true. Only when there is nothing remembered -- muted before this
-        program started -- does it fall back to matching the speakers, which is
-        where they sit by default anyway.
+        There is nothing to remember and no level to restore: on is every
+        channel at half, off is the sub's pair at zero and the speakers at
+        full. Both leave the speakers at the same loudness, which is the whole
+        point -- the interface sums the sub's channels into them.
         """
         sink = match(SUB_SINK, self.snap.sinks)
         if not sink:
@@ -836,14 +848,11 @@ class Machine:
         volumes = list(channel_volumes(sink))
         if len(volumes) <= max(SUB_CHANNELS):
             return
-        if sub_muted(volumes):
-            level = self._sub_level or tuple(volumes[c] for c in MAIN_CHANNELS)
-            for channel, value in zip(SUB_CHANNELS, level):
-                volumes[channel] = value
-        else:
-            self._sub_level = tuple(volumes[c] for c in SUB_CHANNELS)
-            for channel in SUB_CHANNELS:
-                volumes[channel] = 0
+        turning_on = sub_muted(volumes)
+        for channel in MAIN_CHANNELS:
+            volumes[channel] = SUB_HALF if turning_on else SUB_FULL
+        for channel in SUB_CHANNELS:
+            volumes[channel] = SUB_HALF if turning_on else 0
         # every channel has to be given, so the other eight are passed back
         # exactly as they were read rather than reset to anything
         spawn('pactl', 'set-sink-volume', sink, *(str(v) for v in volumes))
