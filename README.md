@@ -11,8 +11,8 @@ running in the background.
 > suite, but nobody has actually read it line by line. Read it yourself before
 > you run it.
 
-Dual licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your
-option — `MIT OR Apache-2.0`.
+Copyright © 2026 Taylor Hornby. Dual licensed under [MIT](LICENSE-MIT) or
+[Apache 2.0](LICENSE-APACHE), at your option — `MIT OR Apache-2.0`.
 
 ## The top row
 

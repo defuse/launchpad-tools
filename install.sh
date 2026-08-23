@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Copyright (c) 2026 Taylor Hornby
 # Install launchpad-tools for the current user. No root, nothing outside $HOME.
 #
 #   ./install.sh              symlink into ~/.local/bin and enable the service
