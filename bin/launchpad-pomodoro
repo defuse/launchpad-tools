@@ -41,10 +41,11 @@ The machine tab, fourth from the left, is read-only except its bottom row:
           changing the output or the effects anywhere else moves the pads.
   rows 4, 2   reserved, drawn dark
 
-  The EasyEffects pad is an on/off switch whose COLOUR says which preset is
-  live: white off, green for the room, orange for the headset. EasyEffects
-  autoloads a preset per output device, so switching the output switches the
-  processing by itself and the board does not touch it -- it only reports.
+  The output pads show the default sink and nothing else. The EasyEffects pad
+  is an on/off switch whose COLOUR says which preset is live: white off, green
+  for the room, orange for the headset. The preset name is asked of
+  EasyEffects, but only while this tab is drawn and only while its window is
+  closed -- see read_preset().
 
 Everything on that tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
@@ -361,6 +362,7 @@ EE_CONF = os.path.expanduser('~/.config/easyeffects/db/easyeffectsrc')
 # here: the pad should follow whatever autoload is actually set to, so renaming
 # a preset in EasyEffects cannot leave the board lying about it.
 EE_AUTOLOAD = os.path.expanduser('~/.local/share/easyeffects/autoload/output')
+EE_PRESETS  = os.path.expanduser('~/.local/share/easyeffects/output')
 PRESET_HEADSET = ORANGE                    # effects on, wearing the headset
 PRESET_MAIN    = GREEN                     # effects on, out through the room
 
@@ -576,6 +578,18 @@ def read_conf(key, section):
     return ''
 
 
+def ee_window_open():
+    """Is the EasyEffects window on screen?
+
+    Because asking EasyEffects anything closes it: every CLI invocation
+    reaches the running instance, which hides its window in response. So the
+    board asks only when nobody is using the UI -- and when somebody is, the
+    UI is showing them the preset anyway.
+    """
+    return bool(sh('xdotool', 'search', '--onlyvisible', '--name',
+                   '^Easy Effects$', timeout=2).strip())
+
+
 def headset_preset():
     """The preset EasyEffects autoloads for the headset, or ''.
 
@@ -638,16 +652,22 @@ class Machine:
     it last saw. A reading a few seconds stale is fine; a stalled board is not.
     """
     AUDIO, EFFECTS, TEMPS, DISKS = 1.0, 5.0, 5.0, 30.0
+    PRESET_IDLE = 3.0                  # stop asking this long after the last frame
+    PRESET_MAX  = 10.0                 # ask again anyway, in case it changed in the UI
 
     def __init__(self):
         self.snap = Snapshot()
+        self.watched = 0.0             # when the tab was last drawn
+        self._asked_for = None         # the sink the preset was last read for
+        self._asked_at = 0.0
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _loop(self):
         due = {}
-        jobs = (('audio', self.AUDIO, self.read_audio),
+        jobs = (('preset', 0.5, self.read_preset),
+                ('audio', self.AUDIO, self.read_audio),
                 ('effects', self.EFFECTS, self.read_effects),
                 ('temps', self.TEMPS, self.read_temps),
                 ('disks', self.DISKS, self.read_disks))
@@ -691,8 +711,39 @@ class Machine:
         """
         running = bool(sh('pgrep', '-x', 'easyeffects').strip())
         self.assume(running=running, effects=running and not read_bypass(),
-                    preset=read_conf('lastLoadedOutputPreset', '[Presets]'),
                     headset_preset=headset_preset())
+
+    def attend(self, now=None):
+        """The machine tab is on screen. Only then is the preset worth the
+        process it costs to ask for."""
+        self.watched = now if now is not None else time.time()
+
+    def read_preset(self):
+        """Which preset EasyEffects has loaded.
+
+        Asked of EasyEffects itself, because nothing else knows in time: it
+        records the name in its config file, but writes that file lazily --
+        measured still naming the previous preset a minute after autoload had
+        switched it -- and the name is the one thing that cannot be worked out
+        from anywhere else. Deriving it from the output device would be a
+        guess, and would be wrong the moment a preset is chosen by hand.
+
+        So: only while the tab is being drawn, only when the window is closed,
+        and only when the output has changed or ten seconds have passed.
+        """
+        now = time.time()
+        if now - self.watched > self.PRESET_IDLE:
+            return                                  # nobody is looking
+        if self.snap.sink == self._asked_for and now - self._asked_at < self.PRESET_MAX:
+            return                                  # nothing has changed
+        if ee_window_open():
+            # their window, their business: fall back to the recorded name
+            self.assume(preset=read_conf('lastLoadedOutputPreset', '[Presets]'))
+            return
+        self._asked_for, self._asked_at = self.snap.sink, now
+        out = [l.strip() for l in sh('easyeffects', '-a', 'output').splitlines() if l.strip()]
+        if out:
+            self.assume(preset=out[-1])
 
     def read_temps(self):
         readings = []
@@ -1136,6 +1187,7 @@ class Board:
 
     def render_machine(self):
         """Disks, filesystems, temperatures and the audio controls."""
+        self.machine.attend()
         snap = self.machine.snap
         self.render_disks(snap)
         self.render_filesystems(snap)

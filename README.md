@@ -118,12 +118,20 @@ what the system is actually doing rather than the last thing the board asked
 for — change the output in the tray applet and the pads follow. Picking the
 headset takes its microphone with it.
 
-The EasyEffects pad is an on/off switch whose colour says which preset is live:
-white off, green for the room preset, orange for the headset one. EasyEffects
-autoloads a preset per output device, so switching output switches the
-processing on its own — the board reports it rather than driving it. Which
-preset counts as the headset one is read from EasyEffects' own autoload
-bindings, so renaming a preset there cannot leave the pad lying about it.
+The output pads show the default sink and nothing else — they do not care what
+EasyEffects is doing. The EasyEffects pad is an on/off switch whose colour says
+which preset is live: white off, green for the room preset, orange for the
+headset one. Which preset counts as the headset one comes from EasyEffects' own
+autoload bindings, so renaming a preset there cannot leave the pad lying.
+
+The loaded preset is asked of EasyEffects directly, because nothing else knows
+in time — it records the name in its config file but writes that file lazily,
+measured still naming the previous preset a minute after autoload had switched
+it. Asking costs a process, and worse, reaches the running instance and closes
+whatever window it has open. So the board asks only while the tab is being
+drawn, only when the EasyEffects window is closed, and only when the output has
+changed or ten seconds have gone by. With the window open it falls back to the
+recorded name, on the grounds that you are looking at the real one.
 
 All of it comes from a background poller. Nothing is read during a frame:
 `easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
@@ -186,7 +194,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 344 tests, about nine seconds
+tests/run-tests             # 351 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

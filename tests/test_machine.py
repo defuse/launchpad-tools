@@ -320,6 +320,84 @@ def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, e
     assert mach.machine.snap.effects is not effects
 
 
+# ---- asking EasyEffects which preset is loaded ---------------------------
+@pytest.fixture
+def asked(mod, monkeypatch):
+    """Record what the poller shells out for, and answer for it."""
+    calls, answers = [], {'easyeffects': 'at headphones\n', 'xdotool': ''}
+    def fake_sh(*cmd, **kw):
+        calls.append(list(cmd))
+        return answers.get(cmd[0], '')
+    monkeypatch.setattr(mod, 'sh', fake_sh)
+    return calls, answers
+
+
+def asked_ee(calls):
+    return [c for c in calls if c[0] == 'easyeffects']
+
+
+def test_the_preset_is_not_asked_for_when_nobody_is_looking(mach, mod, asked):
+    """It costs a process, and the pad it colours is only drawn on one tab."""
+    calls, _ = asked
+    mach.machine.watched = 0.0
+    mach.machine.read_preset()
+    assert asked_ee(calls) == []
+
+
+def test_drawing_the_tab_makes_it_ask(mach, mod, asked):
+    calls, _ = asked
+    mach.machine.attend()
+    mach.machine.read_preset()
+    assert asked_ee(calls) == [['easyeffects', '-a', 'output']]
+    assert mach.machine.snap.preset == 'at headphones'
+
+
+def test_it_does_not_ask_again_for_the_same_output(mach, mod, asked):
+    """Once per switch, not once per poll."""
+    calls, _ = asked
+    mach.machine.attend()
+    mach.machine.read_preset()
+    mach.machine.read_preset()
+    assert len(asked_ee(calls)) == 1
+
+
+def test_changing_the_output_makes_it_ask_again(mach, mod, asked):
+    calls, _ = asked
+    mach.machine.attend()
+    mach.machine.read_preset()
+    mach.machine.assume(sink='something else')
+    mach.machine.read_preset()
+    assert len(asked_ee(calls)) == 2
+
+
+def test_it_asks_again_eventually_in_case_you_changed_it_by_hand(mach, mod, asked, monkeypatch):
+    calls, _ = asked
+    mach.machine.attend()
+    mach.machine.read_preset()
+    mach.machine._asked_at -= mod.Machine.PRESET_MAX + 1
+    mach.machine.attend()
+    mach.machine.read_preset()
+    assert len(asked_ee(calls)) == 2
+
+
+def test_it_never_asks_while_the_easyeffects_window_is_open(mach, mod, asked, monkeypatch):
+    """Any CLI invocation reaches the running instance and closes its window.
+    While somebody has it open, the UI is showing them the preset anyway."""
+    calls, answers = asked
+    answers['xdotool'] = '102760473\n'
+    monkeypatch.setattr(mod, 'read_conf', lambda *a: 'recorded name')
+    mach.machine.attend()
+    mach.machine.read_preset()
+    assert asked_ee(calls) == []
+    assert mach.machine.snap.preset == 'recorded name', 'falls back to the record'
+
+
+def test_drawing_the_machine_tab_counts_as_looking(mach, mod):
+    mach.machine.watched = 0.0
+    mach.render_machine()
+    assert mach.machine.watched > 0.0
+
+
 # ---- the poller ----------------------------------------------------------
 def test_nothing_is_read_during_a_frame(mach, mod):
     """render() must not shell out: `easyeffects -b 3` alone is a quarter of a
