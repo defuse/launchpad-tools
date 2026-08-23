@@ -157,16 +157,65 @@ def test_the_peak_sits_above_the_bar(board, mod, out, monkeypatch):
     board.mode = mod.M_SPEC
     levels = [0.0] * mod.CELLS; levels[0] = 2 / 7
     peaks = [0.0] * mod.CELLS; peaks[0] = 5 / 7
-    monkeypatch.setattr(board.spectrum, 'bands', lambda *a, **k: (levels, peaks))
-    board.shown.clear(); out.sent.clear()
-    board.render_spectrum()
-    column = [out.lit().get(mod.pad(r, 0)) for r in mod.SPEC_ROWS]
-    assert column == [mod.OFF, mod.OFF, mod.SPEC_PEAK, mod.OFF,
+    bar = board.bar_colours(mod.DAY)
+    column = draw(board, mod, out, levels, peaks, 0)
+    assert column == [bar[0], mod.OFF, mod.SPEC_PEAK, mod.OFF,
                       mod.OFF, mod.SPEC_HUES[0], mod.SPEC_HUES[0]]
 
 
-def test_the_spectrum_tab_has_no_day_bar(mod):
-    """Seven rows of resolution beats six and a clock you can read on four
-    other tabs."""
+# ---- the day bar shares the top row -------------------------------------
+def draw(board, mod, out, levels, peaks, col):
+    """Render one frame and read a column back, top row first."""
+    board.spectrum.bands = lambda *a, **k: (levels, peaks)
+    board.shown.clear(); out.sent.clear()
+    board.render_spectrum()
+    return [out.lit().get(mod.pad(r, col)) for r in mod.SPEC_ROWS]
+
+
+def test_the_top_row_shows_the_day_bar(board, mod, out):
+    """It costs the spectrum nothing until a column actually needs that cell,
+    which beats giving the bar a row of its own out of seven."""
+    board.mode = mod.M_SPEC
+    quiet = [0.0] * mod.CELLS
+    bar = board.bar_colours(mod.DAY)
+    assert bar[0] != mod.OFF, 'the fixture clock is inside the first slice'
+    top = [draw(board, mod, out, quiet, quiet, c)[0] for c in range(mod.CELLS)]
+    assert top == bar
+
+
+def test_a_loud_band_writes_over_its_own_bar_cell_only(board, mod, out):
+    """Not the whole row: the columns beside it still show the bar."""
+    board.mode = mod.M_SPEC
+    levels = [0.0] * mod.CELLS; levels[0] = 1.0          # column 0 to the top
+    quiet = [0.0] * mod.CELLS
+    bar = board.bar_colours(mod.DAY)
+    board.spectrum.bands = lambda *a, **k: (levels, quiet)
+    board.shown.clear(); out.sent.clear()
+    board.render_spectrum()
+    top = [out.lit().get(mod.pad(mod.BAR_ROW, c)) for c in range(mod.CELLS)]
+    assert top[0] == mod.SPEC_HUES[0]
+    assert top[1:] == bar[1:]
+
+
+def test_a_peak_reaching_the_top_writes_over_the_bar_too(board, mod, out):
+    board.mode = mod.M_SPEC
+    quiet = [0.0] * mod.CELLS
+    peaks = [0.0] * mod.CELLS; peaks[3] = 1.0
+    assert draw(board, mod, out, quiet, peaks, 3)[0] == mod.SPEC_PEAK
+
+
+def test_the_bar_comes_back_when_the_band_drops(board, mod, out):
+    board.mode = mod.M_SPEC
+    loud = [0.0] * mod.CELLS; loud[0] = 1.0
+    quiet = [0.0] * mod.CELLS
+    bar = board.bar_colours(mod.DAY)
+    assert draw(board, mod, out, loud, quiet, 0)[0] == mod.SPEC_HUES[0]
+    assert draw(board, mod, out, quiet, quiet, 0)[0] == bar[0]
+
+
+def test_the_spectrum_owns_its_top_row_rather_than_sharing_it(mod):
+    """It draws the bar itself, so the row stays one widget's on the layout:
+    two widgets drawing one row is what the startup check exists to stop."""
     assert mod.M_SPEC not in mod.BARS
     assert mod.SPEC_ROWS == [1, 2, 3, 4, 5, 6, 7]
+    assert mod.widget_at(mod.M_SPEC, mod.BAR_ROW) is mod.Widget.SPECTRUM

@@ -1173,29 +1173,46 @@ class Board:
             else:                                  col = OFF
             self.set(pad(FUNC_ROW, c), col)
 
-    def render_bar(self, period):
-        """BAR_ROW: how much of `period` has begun. See Period."""
+    def bar_colours(self, period):
+        """What each cell of `period`'s bar should be right now, blink and all.
+
+        Returned rather than drawn, because the spectrum tab paints this row
+        as its own background.
+        """
         lit, left = period.bar()
         stage = period.stage(left) if lit >= CELLS else None
         colour = stage.colour if stage else period.colour
-        for c in range(CELLS):
-            p = pad(BAR_ROW, c)
-            if c >= lit:                self.set(p, OFF)
-            elif stage and stage.off:   self.flash(p, colour, stage.on, stage.off)
-            else:                       self.set(p, colour)
+        if stage and stage.off and (time.time() % (stage.on + stage.off)) >= stage.on:
+            colour = OFF                                  # the dark half of a blink
+        return [colour if c < lit else OFF for c in range(CELLS)]
+
+    def render_bar(self, period):
+        """BAR_ROW: how much of `period` has begun. See Period."""
+        for c, colour in enumerate(self.bar_colours(period)):
+            self.set(pad(BAR_ROW, c), colour)
 
     def render_spectrum(self):
         """Eight bands, filled from the bottom, one hue per band, with a peak
-        that hangs above the bar and falls back."""
+        that hangs above the bar and falls back.
+
+        The top row carries the day bar, per column, wherever the spectrum is
+        not currently using that cell. Giving the bar a row of its own would
+        cost the spectrum a seventh of its height for something that is only
+        needed once a column actually reaches the top; this way the bar is
+        there the rest of the time and a loud band simply writes over its own
+        cell, restoring it on the way back down.
+        """
         levels, peaks = self.spectrum.bands(self.machine.snap.sink)
         rows = list(reversed(SPEC_ROWS))                  # index 0 is the bottom
+        bar = self.bar_colours(DAY)
         for c in range(CELLS):
             lit = int(round(levels[c] * len(rows)))
             peak = int(round(peaks[c] * len(rows)))
             for i, r in enumerate(rows):
-                if i < lit:                colour = SPEC_HUES[c]
+                if i < lit:                  colour = SPEC_HUES[c]
                 elif peak and i == peak - 1: colour = SPEC_PEAK
-                else:                      colour = OFF
+                elif r == BAR_ROW:           colour = bar[c]
+                else:                        colour = OFF
                 self.set(pad(r, c), colour)
 
     def render_machine(self):

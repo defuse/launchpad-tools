@@ -141,8 +141,8 @@ from anywhere else.
 ## Spectrum
 
 ```
- 1   ·  ·  ·  ·  W  ·  ·  ·     white peaks hang above the bars and fall back
- 2   ·  ·  Y  ·  C  ·  ·  W
+ 1   B  B  ·  ·  W  ·  ·  ·     the day bar, except where a band reaches it
+ 2   ·  ·  Y  ·  C  ·  ·  W     white peaks hang above the bars and fall back
  3   R  ·  Y  ·  C  ·  ·  ·
  4   R  O  Y  G  C  ·  B  M
  5   R  O  Y  G  C  S  B  M
@@ -162,6 +162,12 @@ drawn faster than the rest of the board, which is what audio needs and a
 pomodoro cell does not. If it reads too hot or too cold for what you listen to,
 `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` in `bin/launchpad-pomodoro` are the
 knobs; they are calibrated for this system's usual listening level.
+
+The top row carries the day bar too, one cell at a time: a band loud enough to
+reach it writes over its own cell and the bar returns underneath as soon as the
+band drops. Giving the bar a row to itself would have cost the spectrum a
+seventh of its height permanently, for a cell that is only wanted when a column
+is actually that loud.
 
 Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
 is simply dark.
@@ -202,7 +208,8 @@ at zero all day.
 ## Bars
 
 Row 1 of the pomodoro tab, both habit tabs and the machine tab is not part of
-that tab: it shows how much of a period has begun. The pomodoro, machine and
+that tab: it shows how much of a period has begun. The spectrum shares that row
+rather than reserving it, as described above. The pomodoro, machine and
 daily tabs share the same day — eight three-hour slices from midnight, deep blue
 — and the weekly tab shows its week, one slice per day from Sunday, deep purple.
 
@@ -264,7 +271,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 358 tests, about nine seconds
+tests/run-tests             # 362 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
