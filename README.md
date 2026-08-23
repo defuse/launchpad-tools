@@ -124,10 +124,12 @@ which preset is live: white off, green for the room preset, orange for the
 headset one. Which preset counts as the headset one comes from EasyEffects' own
 autoload bindings, so renaming a preset there cannot leave the pad lying.
 
-The loaded preset is asked of EasyEffects directly, once a second, because
-nothing else knows in time — it records the name in its config file but writes
-that file lazily, measured still naming the previous preset a minute after
-autoload had switched it.
+Both the loaded preset and whether it is bypassed are asked of EasyEffects
+directly, once a second, in a single call. Nothing else knows in time: it
+records them in its config file but writes that file lazily, measured still
+naming the previous preset a minute after autoload had switched it. Reading
+bypass from that file is what used to make a pad spring back to green a second
+after being pressed off — the stale file overwriting the press.
 
 Asking costs a process and closes the EasyEffects window if one is open, and it
 asks anyway: a pad that quietly disagrees with the UI is worse than a window
@@ -195,7 +197,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 349 tests, about nine seconds
+tests/run-tests             # 354 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

@@ -43,9 +43,9 @@ The machine tab, fourth from the left, is read-only except its bottom row:
 
   The output pads show the default sink and nothing else. The EasyEffects pad
   is an on/off switch whose COLOUR says which preset is live: white off, green
-  for the room, orange for the headset. The preset name is asked of
-  EasyEffects once a second while this tab is drawn, and not at all otherwise
-  -- see read_preset().
+  for the room, orange for the headset. Both the preset and the bypass state
+  are asked of EasyEffects once a second while this tab is drawn, and not at
+  all otherwise -- see read_easyeffects().
 
 Everything on that tab is sampled by a background thread and drawn from a
 snapshot. Reading it during a frame would not work: `easyeffects -b 3` alone
@@ -563,21 +563,6 @@ def hwmon_temp(name, label):
     return None
 
 
-def read_conf(key, section):
-    """One value out of EasyEffects' Qt-style config file."""
-    try:
-        at = ''
-        for line in open(EE_CONF):
-            line = line.strip()
-            if line.startswith('['):
-                at = line
-            elif at == section and line.startswith(key + '='):
-                return line.split('=', 1)[1].strip()
-    except Exception:
-        pass
-    return ''
-
-
 def headset_preset():
     """The preset EasyEffects autoloads for the headset, or ''.
 
@@ -596,15 +581,6 @@ def headset_preset():
     except Exception:
         pass
     return ''
-
-
-def read_bypass():
-    """EasyEffects' global bypass, straight out of its config file.
-
-    It writes the file the instant the setting changes, so this is as live as
-    asking the application would be, and it costs a read instead of a process.
-    """
-    return read_conf('bypass', '[EffectsPipelines]').lower() == 'true'
 
 
 def gpu_temp():
@@ -652,7 +628,7 @@ class Machine:
 
     def _loop(self):
         due = {}
-        jobs = (('preset', self.PRESET, self.read_preset),
+        jobs = (('easyeffects', self.PRESET, self.read_easyeffects),
                 ('audio', self.AUDIO, self.read_audio),
                 ('effects', self.EFFECTS, self.read_effects),
                 ('temps', self.TEMPS, self.read_temps),
@@ -696,36 +672,49 @@ class Machine:
         a deliberate press, unacceptable once every poll.
         """
         running = bool(sh('pgrep', '-x', 'easyeffects').strip())
-        self.assume(running=running, effects=running and not read_bypass(),
-                    headset_preset=headset_preset())
+        state = dict(running=running, headset_preset=headset_preset())
+        if not running:
+            state['effects'] = False       # nothing running, nothing processing
+        self.assume(**state)
 
     def attend(self, now=None):
         """The machine tab is on screen. Only then is the preset worth the
         process it costs to ask for."""
         self.watched = now if now is not None else time.time()
 
-    def read_preset(self):
-        """Which preset EasyEffects has loaded, asked of EasyEffects.
+    def read_easyeffects(self):
+        """Preset AND bypass, asked of EasyEffects itself, in one process.
 
-        Nothing else knows in time. It records the name in its config file but
-        writes that file lazily -- measured still naming the previous preset a
-        minute after autoload had switched it. Working it out from the output
-        device would be a guess, and wrong the moment a preset is picked by
-        hand. The graph, the cache and the plugin state do not carry the name
-        at all.
+        Both come from here because both lie everywhere else: the config file
+        records them but writes lazily -- measured still naming the previous
+        preset a minute after autoload had switched it -- and reading bypass
+        from that file is what made a pressed pad spring back to green, the
+        stale file overwriting the press it had just been told about.
 
         Every second while the tab is on screen, and nothing else matters --
         not even that the query closes the EasyEffects window if one is open.
         A pad that quietly disagrees with the UI is worse than a window that
-        shuts: the shut window is at least obvious, and switching tabs stops
+        shuts: the shut window is at least obvious, and leaving the tab stops
         it. Nobody looking means nobody asking, so this costs nothing on any
         other tab.
         """
         if time.time() - self.watched > self.PRESET_IDLE:
             return                                  # nobody is looking
-        out = [l.strip() for l in sh('easyeffects', '-a', 'output').splitlines() if l.strip()]
-        if out:
-            self.assume(preset=out[-1])
+        if not self.snap.running:
+            return                                  # asking would start it
+        # -b 3 reports bypass, -a output the preset, and one invocation can do
+        # both: two would be two Qt startups, and racing them returned empty
+        lines = [l.strip() for l in
+                 sh('easyeffects', '-b', '3', '-a', 'output').splitlines() if l.strip()]
+        if not lines:
+            return
+        state = {}
+        if lines[-1] in ('1', '2'):                 # 1 bypassed, 2 running
+            state['effects'] = lines[-1] == '2'
+            lines = lines[:-1]
+        if lines:
+            state['preset'] = lines[0]
+        self.assume(**state)
 
     def read_temps(self):
         readings = []

@@ -229,16 +229,6 @@ def test_no_bindings_at_all_is_not_an_error(mod, tmp_path, monkeypatch):
     assert mod.headset_preset() == ''
 
 
-def test_reading_a_config_value(mod, tmp_path, monkeypatch):
-    conf = tmp_path / 'easyeffectsrc'
-    conf.write_text('[Presets]\nlastLoadedOutputPreset=at headphones\n\n'
-                    '[StreamOutputs]\noutputDevice=game_stereo\n')
-    monkeypatch.setattr(mod, 'EE_CONF', str(conf))
-    assert mod.read_conf('lastLoadedOutputPreset', '[Presets]') == 'at headphones'
-    assert mod.read_conf('outputDevice', '[Presets]') == '', 'wrong section'
-    assert mod.read_conf('nothing', '[Presets]') == ''
-
-
 # ---- pressing it ---------------------------------------------------------
 def press(board, mod, col, snap):
     board.machine.snap = snap
@@ -269,21 +259,6 @@ def test_switching_output_leaves_easyeffects_alone(mach, mod, col):
     press(mach, mod, col, audio(mod, sink='', running=True, effects=True))
     assert ran('easyeffects') == []
     assert ran('pactl')[0][1] == 'set-default-sink'
-
-
-def test_reading_the_bypass_state_never_touches_easyeffects(mod, tmp_path, monkeypatch):
-    """`easyeffects -b 3` starts a second instance to ask the first, and that
-    closes the window the first one has open. Once a poll, every poll."""
-    conf = tmp_path / 'easyeffectsrc'
-    conf.write_text('[General]\nshowTrayIcon=true\n\n[EffectsPipelines]\nbypass=true\n')
-    monkeypatch.setattr(mod, 'EE_CONF', str(conf))
-    assert mod.read_bypass() is True
-    conf.write_text('[EffectsPipelines]\nbypass=false\n')
-    assert mod.read_bypass() is False
-    conf.write_text('[General]\nbypass=true\n')          # wrong section
-    assert mod.read_bypass() is False
-    conf.unlink()
-    assert mod.read_bypass() is False
 
 
 def test_the_pad_lights_before_the_poll_catches_up(mach, mod):
@@ -324,7 +299,7 @@ def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, e
 @pytest.fixture
 def asked(mod, monkeypatch):
     """Record what the poller shells out for, and answer for it."""
-    calls, answers = [], {'easyeffects': 'at headphones\n', 'xdotool': ''}
+    calls, answers = [], {'easyeffects': 'at headphones\n\n2\n', 'xdotool': ''}
     def fake_sh(*cmd, **kw):
         calls.append(list(cmd))
         return answers.get(cmd[0], '')
@@ -336,29 +311,79 @@ def asked_ee(calls):
     return [c for c in calls if c[0] == 'easyeffects']
 
 
-def test_the_preset_is_not_asked_for_when_nobody_is_looking(mach, mod, asked):
+ASK = ['easyeffects', '-b', '3', '-a', 'output']
+
+
+def looking(mach):
+    mach.machine.assume(running=True)
+    mach.machine.attend()
+    return mach.machine
+
+
+def test_easyeffects_is_not_asked_when_nobody_is_looking(mach, mod, asked):
     """It costs a process, and the pad it colours is only drawn on one tab."""
     calls, _ = asked
+    mach.machine.assume(running=True)
     mach.machine.watched = 0.0
-    mach.machine.read_preset()
+    mach.machine.read_easyeffects()
+    assert asked_ee(calls) == []
+
+
+def test_it_is_not_asked_when_it_is_not_running(mach, mod, asked):
+    """The query would start the very thing it is asking about."""
+    calls, _ = asked
+    mach.machine.assume(running=False)
+    mach.machine.attend()
+    mach.machine.read_easyeffects()
     assert asked_ee(calls) == []
 
 
 def test_drawing_the_tab_makes_it_ask(mach, mod, asked):
     calls, _ = asked
-    mach.machine.attend()
-    mach.machine.read_preset()
-    assert asked_ee(calls) == [['easyeffects', '-a', 'output']]
+    looking(mach).read_easyeffects()
+    assert asked_ee(calls) == [ASK], 'one process, both answers'
     assert mach.machine.snap.preset == 'at headphones'
+    assert mach.machine.snap.effects is True
+
+
+@pytest.mark.parametrize('reply,preset,effects', [
+    ('at headphones\n\n2\n', 'at headphones', True),
+    ('room\n\n1\n', 'room', False),
+    ('2\n', None, True),
+    ('', None, None),
+])
+def test_what_it_makes_of_the_reply(mach, mod, asked, reply, preset, effects):
+    """1 is bypassed, 2 is not; the preset comes back on the line above."""
+    calls, answers = asked
+    answers['easyeffects'] = reply
+    mach.machine.assume(preset='before', effects=False)
+    looking(mach).read_easyeffects()
+    assert mach.machine.snap.preset == (preset if preset is not None else 'before')
+    assert mach.machine.snap.effects is (effects if effects is not None else False)
+
+
+def test_a_press_is_confirmed_by_easyeffects_not_overwritten(mach, mod, asked):
+    """THE BUG: bypass was read from the config file, which EasyEffects writes
+    lazily. Pressing the pad off set it off, and a second later the poll read
+    the not-yet-written file and set it back on -- the pad springing green
+    while the tray showed it off.
+    """
+    calls, answers = asked
+    answers['easyeffects'] = 'room\n\n1\n'
+    mach.machine.assume(running=True, effects=True)
+    mach.machine.set_effects(False)
+    assert mach.machine.snap.effects is False
+    looking(mach).read_easyeffects()
+    assert mach.machine.snap.effects is False, 'the poll must confirm, not undo'
 
 
 def test_it_asks_every_time_while_the_tab_is_up(mach, mod, asked):
-    """A preset changed in the EasyEffects UI has to show up on the pad, and
-    nothing about the output changes when it does."""
+    """A preset or a bypass changed in the EasyEffects UI has to show up on the
+    pad, and nothing about the output changes when it does."""
     calls, _ = asked
-    mach.machine.attend()
+    m = looking(mach)
     for _ in range(3):
-        mach.machine.read_preset()
+        m.read_easyeffects()
     assert len(asked_ee(calls)) == 3
 
 
@@ -367,10 +392,19 @@ def test_it_asks_even_with_the_easyeffects_window_open(mach, mod, asked):
     disagreeing with the UI is worse than a window shutting, which is at least
     obvious and stops as soon as you leave the tab."""
     calls, _ = asked
-    mach.machine.attend()
-    mach.machine.read_preset()
-    assert asked_ee(calls) == [['easyeffects', '-a', 'output']]
+    looking(mach).read_easyeffects()
+    assert asked_ee(calls) == [ASK]
     assert not [c for c in calls if c[0] == 'xdotool'], 'no window check at all'
+
+
+def test_nothing_reads_the_config_file_for_state_any_more(mod):
+    """It is a lazily written record, not a signal: it named the previous
+    preset a minute after the switch, and reading bypass out of it is what
+    made a pressed pad spring back to green.
+    """
+    src = open(mod.__file__).read()
+    assert 'read_bypass' not in src
+    assert 'lastLoadedOutputPreset' not in src
 
 
 def test_drawing_the_machine_tab_counts_as_looking(mach, mod):
