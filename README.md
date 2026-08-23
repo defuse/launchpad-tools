@@ -107,12 +107,19 @@ new tab's window opens in its place — or nothing does, on a tab that has none.
 The todo list is edited here — type a name, click a slot's header to cycle its
 state, drag it by that header to move it. The text box and the margin around it
 take no gesture at all, so reaching for the box never changes a state and
-selecting a name never reorders the list. The name boxes wrap like a text editor and every one of
-them is as tall as the longest item needs, so nothing scrolls and nothing is
-hidden. A drag is a *move*, not a swap: everything between the slot
-and where it lands shifts by one, in whichever direction that turns out to be,
-and each slot carries its own state along with it. `clear list` empties them
-all.
+selecting a name never reorders the list. The name boxes wrap like a text
+editor and every one of them is as tall as the longest item needs, so nothing
+scrolls and nothing is hidden. A drag is a *move*, not a swap: everything
+between the slot and where it lands shifts by one, in whichever direction that
+turns out to be, and each slot carries its own state along with it. `clear
+list` empties them all.
+
+The list lives on the board and is shown here, so the two have to agree about
+it. Every edit the window sends is numbered and the board says in each frame
+which one it has applied; a frame that has not caught up is drawn but its
+version of the list is dropped. Without that, a frame the board had rendered a
+moment earlier — and with a timer running it renders every second — arrives
+after your drag and undoes it on screen.
 
 ## Habits
 
@@ -344,7 +351,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 494 tests, about fifteen seconds
+tests/run-tests             # 639 tests, about thirty seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

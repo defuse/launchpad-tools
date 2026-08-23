@@ -17,14 +17,23 @@ shifting everything between it and where it lands -- left or right, whichever
 way that turns out to be -- because a todo list has an order and swapping two
 items is not the edit anyone means.
 
-stdin:   data <json>   {rows: [...], todo: [...]}
+stdin:   data <json>   {rows: [...], todo: [...], ack: <n>}
          show          display
          hide          withdraw
-stdout:  set <col> <name>      a slot renamed
-         state <col> <v>       a slot's state changed from this window
-         move <from> <to>      a slot dragged somewhere else
-         clear                 empty the list
+stdout:  set <col> <name> <n>  a slot renamed
+         state <col> <v> <n>   a slot's state changed from this window
+         move <from> <to> <n>  a slot dragged somewhere else
+         clear <n>             empty the list
          closed                the window went away
+
+Every edit carries a number, one higher than the last, and the board says in
+each frame which one it has applied. The board renders on its own clock -- with
+a timer running the cells change every second -- so a frame built before it read
+your edit is nearly always on its way, and it carries the list from before.
+Applying that undoes the edit on screen, and the next keystroke then sends the
+undone version back. A frame whose ack is behind the last edit sent is a frame
+that has not seen it: its rows and cells are current and are drawn, its list is
+not and is dropped.
 """
 import sys, json, re, subprocess, threading, queue
 import tkinter as tk
@@ -78,6 +87,16 @@ def g9_centre_box():
         return 1600, 900, 100, 100
 
 
+def normalise(text):
+    """What a box's contents mean as a name.
+
+    One function, used both to send a name and to recognise the board sending
+    it back: the box is left alone exactly when the board already agrees with
+    it, and two spellings of that rule could disagree.
+    """
+    return re.sub(r'\s+', ' ', text).strip()
+
+
 def tint(w, bg):
     """Paint a slot and everything in it. The state colour is the whole cell,
     and the tree under it is two deep now that the grip lives in a header."""
@@ -91,11 +110,22 @@ def say(line):
     sys.stdout.flush()
 
 
+def stale(blob, edit):
+    """Has this frame seen the last edit sent?
+
+    The board says which edit it has applied. One built before it read the
+    latest carries the list from before that edit, and applying it would undo
+    on screen what the board is about to do.
+    """
+    return int(blob.get('ack', 0)) < edit
+
+
 class Window:
     def __init__(self):
         self.rows = []                     # [{row, kind, state, lit, cells}]
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
-        self.drag_from = None
+        self.edit = 0                      # the last edit sent; frames the
+        self.drag_from = None              # board acks behind it are stale
         self.dragged = False
         self.grabbed_at = (0, 0)
         self.ghost = None
@@ -264,27 +294,42 @@ class Window:
                 bg = STATE_BG.get(slot.get('state', 0), CELL_BG)
                 tint(self.slots[c], bg)
                 box = self.entries[c]
-                # never rewrite the box with the cursor in it: the board echoes
-                # a normalised name back, and replacing the text underneath a
-                # typist moves the insert point to the start and scrolls the
-                # view -- which reads as the box refusing to grow
+                # A box is left alone exactly when the board's name for the
+                # slot is what this box would send: that is the echo of your
+                # own typing, normalised, and rewriting it under the cursor
+                # throws the insert point to the start and scrolls the view.
+                #
+                # Any other difference is the model changing underneath the
+                # box -- a drag moved this slot's item elsewhere -- and it has
+                # to be written even if the box has focus. Skipping it left a
+                # name displayed in a slot that no longer held it, which the
+                # next keystroke then wrote back, so a b c became a c c.
                 typing = self.root.focus_get() is box
-                if not typing and box.get('1.0', 'end').strip() != slot.get('name', ''):
+                cur, want = box.get('1.0', 'end-1c'), slot.get('name', '')
+                if cur != want and not (typing and normalise(cur) == want):
+                    at = box.index('insert') if typing else None
                     box.delete('1.0', 'end')
-                    box.insert('1.0', slot.get('name', ''))
+                    box.insert('1.0', want)
+                    if at is not None:
+                        box.mark_set('insert', at)   # Tk clamps past the end
                 box.configure(fg=WHITE if slot.get('name') else MUTED, bg=bg)
             self.fit_slots()
         finally:
             self._painting = False
 
     # ---- todo editing ----------------------------------------------------
+    def edited(self, line):
+        """Send an edit to the board, numbered so its answer can be dated."""
+        self.edit += 1
+        say(f'{line}\t{self.edit}')
+
     def name_typed(self, col):
         if self._painting:
             return
-        name = re.sub(r'\s+', ' ', self.entries[col].get('1.0', 'end')).strip()
+        name = normalise(self.entries[col].get('1.0', 'end'))
         self.todo[col]['name'] = name
         self.fit_slots()
-        say(f'set\t{col}\t{name}')
+        self.edited(f'set\t{col}\t{name}')
 
     def fit_slots(self):
         """Every box as tall as the tallest one needs to be.
@@ -311,7 +356,7 @@ class Window:
 
     def clear(self):
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
-        say('clear')
+        self.edited('clear')
         self.paint()
 
     # ---- drag to move, tap to press --------------------------------------
@@ -361,7 +406,7 @@ class Window:
             return
         # a move, so everything between shifts one way or the other
         self.todo.insert(dst, self.todo.pop(src))
-        say(f'move\t{src}\t{dst}')
+        self.edited(f'move\t{src}\t{dst}')
         self.paint()
 
     def slot_under(self, x, y):
@@ -391,7 +436,11 @@ class Window:
             rebuild = ([r['row'] for r in rows] != [r['row'] for r in self.rows]
                        or not self._built)
             self.rows = rows
-            self.todo = blob.get('todo', self.todo)
+            # the rows are the board's alone and are always current; the list
+            # is shared, so a frame that has not seen the last edit sent keeps
+            # its version of it to itself
+            if not stale(blob, self.edit):
+                self.todo = blob.get('todo', self.todo)
             if rebuild:
                 self.build()
             self.paint()

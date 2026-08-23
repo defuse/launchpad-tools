@@ -1117,6 +1117,7 @@ class Board:
         self.shown = {}                        # pad -> (channel, colour)
         self.rows = {r: {'state': IDLE, 'started': 0.0} for r in TIMER_ROWS}
         self.todo = blank_todo()               # eight slots: name and state
+        self._todo_edit = 0                    # the window's last edit applied
         # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
         # every tab reuses the same 64 physical pads, so note 61 is both habit
         # cell (2,0) and pomodoro row 2's start pad. A press must only ever be
@@ -1212,18 +1213,18 @@ class Board:
                 f = line.rstrip('\n').split('\t')
                 if f[0] == 'closed':
                     self._window = None
-                elif f[0] == 'set' and len(f) == 3:
+                elif f[0] == 'set' and len(f) in (3, 4):
                     self.todo[int(f[1])]['name'] = f[2].strip()
-                    self.save()
-                elif f[0] == 'state' and len(f) == 3:
+                    self._todo_applied(f, 3)
+                elif f[0] == 'state' and len(f) in (3, 4):
                     self.todo[int(f[1])]['state'] = int(f[2]) % 3
-                    self.save()
-                elif f[0] == 'move' and len(f) == 3:
+                    self._todo_applied(f, 3)
+                elif f[0] == 'move' and len(f) in (3, 4):
                     self.todo = move_todo(self.todo, int(f[1]), int(f[2]))
-                    self.save()
-                    self._pomo_send()
+                    self._todo_applied(f, 3)
                 elif f[0] == 'clear':
                     self.clear_todo()
+                    self._todo_applied(f, 1)
                 elif f[0] in ('press', 'release') and len(f) == 3:
                     # a cell in the window is the pad it mirrors: the same
                     # entry points, so holding one abandons a timer exactly as
@@ -1232,6 +1233,23 @@ class Board:
                     (self.press if f[0] == 'press' else self.release)(note)
         except Exception as e:
             print(f'pomo reader stopped: {e!r}', flush=True)
+
+    def _todo_applied(self, f, i):
+        """Save, and tell the window which of its edits this list includes.
+
+        The window numbers every edit it sends and ignores the list in any
+        frame that has not caught up to its latest -- otherwise a frame the
+        board had already rendered would undo the edit on screen a moment
+        before the board applies it. The number has to go back promptly, so an
+        edit sends a frame rather than waiting for the next tick.
+        """
+        if len(f) > i:
+            try:
+                self._todo_edit = max(self._todo_edit, int(f[i]))
+            except ValueError:
+                pass
+        self.save()
+        self._pomo_send()
 
     def clear_todo(self):
         """Every slot back to empty and unstarted -- the button in the window,
@@ -1256,7 +1274,8 @@ class Board:
             name = 'break' if r == BREAK_ROW else f'timer {i + 1}'
             rows.append({'row': r, 'name': f'{name} ({t.length // 60} min)',
                          'state': self.rows[r]['state'], 'cells': cells})
-        blob = json.dumps({'rows': rows, 'todo': self.todo})
+        blob = json.dumps({'rows': rows, 'todo': self.todo,
+                           'ack': self._todo_edit})
         if blob == self._pomo_sent:
             return                           # the frame has not changed; the
         self._pomo_sent = blob               # window is redrawn 20 times a
