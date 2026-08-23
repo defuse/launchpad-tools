@@ -209,13 +209,13 @@ bottom uses htop's colours.
 ## Network
 
 ```
- 1   · · · · · · · ·    download on the left, upload on the right
- 2   · · · · · · · ·
- 3   · · · · · · · ·
- 4   · · · · · · · ·
- 5   C C · · · · · ·    the fill snakes: each row
- 6   C C C C · · O O    picks up where the one below stopped
- 7   C C C C O O O O
+ 1   C C C C · · · ·    download hangs from the top left, snaking down
+ 2   C C C C · · · ·
+ 3   C C C C · · · ·
+ 4   · C C C · · · ·
+ 5   · · · · O O · ·
+ 6   · · · · O O O O
+ 7   · · · · O O O O    upload climbs from the bottom, snaking up
 ```
 
 Two half-width bars filling from the bottom. Each row is four pads, so a
@@ -225,7 +225,9 @@ at zero all day.
 
 Every other row runs the other way, so the lit pads are one unbroken run rather
 than a stack of rows each restarting at the left — growth reads as growth
-wherever in the row it happens to be.
+wherever in the row it happens to be. Download hangs down from the top and
+upload climbs from the bottom, so which half is which is legible from the shape
+without remembering which colour was which.
 
 ## Bars
 
@@ -293,7 +295,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 406 tests, about eleven seconds
+tests/run-tests             # 409 tests, about eleven seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

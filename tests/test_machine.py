@@ -306,19 +306,51 @@ def test_the_fill_is_one_unbroken_run(mod):
         assert same_row or next_row, f'{(r1, c1)} to {(r2, c2)} is a jump'
 
 
-def test_the_network_meter_paints_a_snake(board, mod, out, monkeypatch):
-    monkeypatch.setattr(board, 'net_rates', lambda: (5e5, 0.0))   # download only
+def net(board, mod, out, rx, tx):
+    """Paint the meter at known rates and return {row: [8 colours]}."""
+    board.net_rates = lambda: (rx, tx)
     board.mode = mod.M_NET
     board.shown.clear(); out.sent.clear()
     board.render_net()
     lit = out.lit()
-    rows = list(reversed(mod.CPU_ROWS + [mod.MEM_ROW]))
+    return {r: [lit.get(mod.pad(r, c)) for c in range(mod.CELLS)]
+            for r in mod.CPU_ROWS + [mod.MEM_ROW]}
+
+
+def test_download_grows_down_from_the_top_left(board, mod, out):
+    """Which half is which should be legible from the shape, not from
+    remembering which colour meant what."""
+    painted = net(board, mod, out, rx=5e5, tx=0.0)
+    top, bottom = mod.CPU_ROWS[0], mod.MEM_ROW
+    assert painted[top][:4] == [mod.CYAN] * 4, 'starts at the top left'
+    assert painted[bottom][:4] == [mod.OFF] * 4, 'and has not reached the floor'
+
+
+def test_upload_grows_up_from_the_bottom(board, mod, out):
+    painted = net(board, mod, out, rx=0.0, tx=5e5)
+    top, bottom = mod.CPU_ROWS[0], mod.MEM_ROW
+    assert painted[bottom][4:] == [mod.ORANGE] * 4, 'starts at the bottom'
+    assert painted[top][4:] == [mod.OFF] * 4
+
+
+def test_the_two_halves_grow_towards_each_other(board, mod, out):
+    painted = net(board, mod, out, rx=3e4, tx=3e4)          # the same modest rate
+    lit_rows = lambda half: [r for r, cells in painted.items()
+                             if any(v not in (None, mod.OFF) for v in
+                                    (cells[:4] if half == 0 else cells[4:]))]
+    assert min(lit_rows(0)) == mod.CPU_ROWS[0], 'download hangs from the top'
+    assert max(lit_rows(1)) == mod.MEM_ROW, 'upload stands on the bottom'
+
+
+def test_the_network_meter_paints_a_snake(board, mod, out):
+    painted = net(board, mod, out, rx=5e5, tx=0.0)
+    rows = mod.CPU_ROWS + [mod.MEM_ROW]                     # download runs top-down
     on = [(i, c) for i, r in enumerate(rows) for c in range(4)
-          if lit.get(mod.pad(r, c)) == mod.CYAN]
+          if painted[r][c] == mod.CYAN]
     assert on, 'something is lit'
     order = [(i, mod.snake(i, j, 4)) for i in range(len(rows)) for j in range(4)]
-    assert on == sorted(on), 'lit pads listed bottom-up'
-    assert set(on) == set(order[:len(on)]), 'and they are the first N of the snake'
+    assert set(on) == set(order[:len(on)]), 'the first N steps of the snake'
+    assert on == sorted(on)
 
 
 # ---- the control row -----------------------------------------------------

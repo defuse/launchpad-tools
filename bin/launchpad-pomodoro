@@ -1711,14 +1711,20 @@ class Board:
         The fill snakes: every other row runs the other way, so the lit pads
         are one unbroken run rather than a stack of rows that each restart at
         the left. Growth then reads as growth, wherever in the row it is.
+
+        Download grows downward from the top left and upload upward from the
+        bottom, so which half is which is legible from the shape alone rather
+        than from remembering which colour was which.
         """
         import math
         LO, HI = 1e3, 1.25e8                       # 1 KB/s .. ~1 Gbit/s
-        rows = list(reversed(CPU_ROWS + [MEM_ROW]))   # bottom-up, 7 rows
+        down = CPU_ROWS + [MEM_ROW]                  # top-down, coming in
+        up = list(reversed(down))                    # bottom-up, going out
         half = CELLS // 2
-        steps = len(rows) * half
+        steps = len(down) * half
         rx, tx = self.net_rates()
-        for side, (rate, colour) in enumerate(((rx, CYAN), (tx, ORANGE))):
+        for side, (rate, colour, rows) in enumerate(((rx, CYAN, down),
+                                                     (tx, ORANGE, up))):
             frac = 0.0 if rate <= LO else min(1.0, math.log10(rate / LO) / math.log10(HI / LO))
             lit = int(round(frac * steps))
             for i, r in enumerate(rows):
