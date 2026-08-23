@@ -57,6 +57,17 @@ Two independent grids, daily and weekly. Each pad is one habit, showing its own
 colour when unstarted, flashing red while in progress, solid green when done.
 A pad with no name is off and does nothing.
 
+The top row of each grid is not a habit but a bar showing how much of the
+period those habits are for has begun — eight three-hour slices from midnight
+in deep blue for the daily tab, one slice per day from Sunday in deep purple
+for the weekly one. A cell lights as its slice starts rather than when it ends,
+so a full bar means you are inside the last one; lighting on the way out would
+put the final cell on the stroke of midnight, replaced by an empty bar in the
+same instant. Seven days share eight cells, so the spare one lights with the
+seventh. A full bar turns red, and the daily one blinks through the last hour:
+pomodoro cadence from 23:00, twice that from 23:30, rapid from 23:45. The
+weekly bar never blinks — it is full for a whole day.
+
 **Hold** a pad to cycle its state, once per second held. **Press** it to open a
 window on screen showing the whole grid, where you can rename habits, pick
 colours, drag them around to rearrange, and double-click to cycle. Everything
@@ -103,7 +114,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 187 tests, about six seconds
+tests/run-tests             # 225 tests, about six seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

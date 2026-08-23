@@ -36,7 +36,10 @@ PALETTE = [(3,'white','#e8e8e8'), (9,'orange','#ff8c1a'), (13,'yellow','#ffd21a'
            (49,'purple','#9a3aff'), (53,'magenta','#ff3ad6'), (57,'pink','#ff7ab0')]
 BY_IDX  = {i: h for i, _, h in PALETTE}
 NAME_OF = {i: n for i, n, _ in PALETTE}
-ROWS, COLS, HAB_ROW0 = 8, 8, 1
+# HAB_ROW0 is 2, not 1: the board's top habit row is the elapsed-time bar,
+# so there is nothing there to edit and offering a cell would invite habits
+# that the pads would never show
+ROWS, COLS, HAB_ROW0 = 8, 8, 2
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 YELLOW_B, RED_B = '#ffd21a', '#ff4444'
 # cell background carries the habit state; deliberately dim so the bright

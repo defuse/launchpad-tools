@@ -69,6 +69,7 @@ DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim va
 
 # mode row: one colour per mode; the SELECTED mode shows white instead
 MAGENTA, ORANGE, PINK = 53, 9, 57
+PURPLE = 49
 SKY = 37
 TAB_SELECTED = SKY                   # tabs are white; the selected one is sky blue
 HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
@@ -81,8 +82,27 @@ TABS = (M_POMO, M_HAB, M_HAB2, M_SYS, M_NET)
 HAB_MODES = (M_HAB, M_HAB2)          # each keeps its own independent set
 NET_IFACE = None                     # auto-detected: the default-route interface
 
-# habits occupy everything below the mode row
-HAB_ROWS = [1, 2, 3, 4, 5, 6, 7]
+# habits occupy everything below the mode row except the top one, which the
+# elapsed-time bar has taken over
+HAB_ROWS = [2, 3, 4, 5, 6, 7]
+
+# ---- elapsed-time bars ----------------------------------------------------
+# The top row of a habit tab shows how much of the period those habits are for
+# has BEGUN, one cell per slice. A cell lights as its slice starts, not when it
+# ends, so a full bar means "you are inside the last slice" -- lighting on the
+# way out would put the final cell on the stroke of midnight, where it would be
+# replaced by an empty bar in the same instant.
+PROG_ROW  = 1
+PROG_DAY  = BLUE                      # eight three-hour slices from midnight
+PROG_WEEK = PURPLE                    # one slice per day from Sunday midnight
+PROG_FULL = RED                       # bar full: the period is nearly over
+# The daily bar escalates through the last hour. Same duty-cycle trick as the
+# pomodoro blink -- chunks cut out of a lit pad rather than a 50% square wave,
+# which reads as urgency instead of an error. The weekly bar never flashes: it
+# fills for a whole day, and a day of blinking pads is just noise.
+PROG_FLASH = ((15 * 60, 0.15, 0.15),                # last 15 min: rapid
+              (30 * 60, 0.75, 0.15),                # last 30 min: twice as fast
+              (60 * 60, FLASH_ON, FLASH_OFF))       # last hour: pomodoro speed
 # No hold threshold for peeking: the window opens the instant a pad goes down
 # and closes on release, so a plain click just flashes it. Waiting to decide
 # whether a press was a "hold" cost 350ms of dead time before anything appeared.
@@ -136,6 +156,40 @@ def row_warn(r):
 STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
 SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
 PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
+
+def day_bar(now=None):
+    """(cells lit, seconds left) for the daily bar: eight 3 h slices.
+
+    The day is the local one, midnight to midnight, so the bar follows the
+    clock on the wall through daylight saving rather than counting 86400s
+    from some past midnight.
+    """
+    t = time.localtime(now if now is not None else time.time())
+    secs = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+    return min(CELLS, secs // (24 * 3600 // CELLS) + 1), 24 * 3600 - secs
+
+
+def week_bar(now=None):
+    """(cells lit, seconds left) for the weekly bar: one slice per day.
+
+    Weeks start Sunday at midnight. Seven days share eight cells, so the spare
+    last one lights with the seventh -- otherwise Saturday would sit at seven
+    of eight and the bar could never read as full.
+    """
+    t = time.localtime(now if now is not None else time.time())
+    day = (t.tm_wday + 1) % 7                   # tm_wday counts from Monday
+    secs = day * 86400 + t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+    lit = day + 1
+    return (CELLS if lit >= CELLS - 1 else lit), 7 * 86400 - secs
+
+
+def prog_flash(left):
+    """Blink cadence for a full bar with `left` seconds to run, or None."""
+    for limit, on, off in PROG_FLASH:
+        if left <= limit:
+            return on, off
+    return None
+
 
 def ding(name):
     """Fire and forget -- never wait on audio from the input loop."""
@@ -338,9 +392,9 @@ class Board:
         self.shown[p] = (channel, colour)
         self.out.send(mido.Message('note_on', channel=channel, note=p, velocity=colour))
 
-    def flash(self, p, colour):
-        period = FLASH_ON + FLASH_OFF
-        lit = (time.time() % period) < FLASH_ON
+    def flash(self, p, colour, on=FLASH_ON, off=FLASH_OFF):
+        period = on + off
+        lit = (time.time() % period) < on
         self.set(p, colour if lit else OFF, CH_STATIC)
 
     def clear(self):
@@ -389,6 +443,7 @@ class Board:
             return
         if self.mode in HAB_MODES:
             self.render_habits()
+            self.render_progress()
             return
         now = time.time()
         for r in TIMER_ROWS:
@@ -720,6 +775,22 @@ class Board:
                 else:
                     col = self.HAB_STATE_COLOUR.get(h.get('state', 0), own)
                 self.set(pad(r, c), col)
+
+    def render_progress(self):
+        """Top row of a habit tab: how much of the day or week has begun."""
+        daily = self.mode == M_HAB
+        lit, left = day_bar() if daily else week_bar()
+        full = lit >= CELLS
+        col = PROG_FULL if full else (PROG_DAY if daily else PROG_WEEK)
+        beat = prog_flash(left) if daily and full else None
+        for c in range(CELLS):
+            p = pad(PROG_ROW, c)
+            if c >= lit:
+                self.set(p, OFF)
+            elif beat:
+                self.flash(p, col, *beat)
+            else:
+                self.set(p, col)
 
     def select_habit(self, r, c):
         """Make (r,c) the selected cell, opening the window if it is closed."""

@@ -16,10 +16,16 @@ def col0(mod, row):
 # --------------------------------------------------------------------------
 
 def test_habit_column_and_pomodoro_column_are_the_same_pads(mod):
-    """The premise of the bug: they collide, by design."""
+    """The premise of the bug: they collide, by design.
+
+    Row 1 changed sides when the elapsed-time bar took the top habit row. It is
+    still a shared pad -- a pomodoro start on one tab, a bar cell on the other
+    -- just no longer shared with a habit.
+    """
     shared = {mod.pad(r, 0) for r in mod.POMO_ROWS}
     habit  = {mod.pad(r, 0) for r in mod.HAB_ROWS}
-    assert shared <= habit
+    assert mod.PROG_ROW in mod.POMO_ROWS
+    assert shared & habit == shared - {mod.pad(mod.PROG_ROW, 0)}
 
 
 def test_holding_a_habit_then_tapping_the_pomodoro_tab_keeps_the_timers(mod, seed, clock):

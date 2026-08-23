@@ -5,6 +5,7 @@ Nothing here may touch the real state file, the real MIDI device, the real
 sound player or the user's display.
 """
 import os, sys, types, threading, json
+import time as _real_time
 
 # Test the scripts sitting next to us in the checkout, not whatever happens to
 # be installed -- otherwise a stale ~/.local/bin copy silently gets tested.
@@ -31,6 +32,10 @@ class FakeClock:
     # a couple of names the module might reach for
     def monotonic(self):
         return self.now
+    def localtime(self, t=None):
+        """The wall clock the fake epoch corresponds to, in local time --
+        the elapsed-time bars are defined against midnight, not an offset."""
+        return _real_time.localtime(self.now if t is None else t)
 
 
 class FakeThread:
