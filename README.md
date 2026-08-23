@@ -159,6 +159,12 @@ carries most of its energy low down, so without one the right of the board
 barely moves. `SPEC_FLOOR`, `SPEC_CEIL` and `SPEC_TILT` are the knobs if it
 sits too high or too low for what you listen to.
 
+The board is redrawn at 20fps everywhere else — a pomodoro cell changes every
+three minutes and a CPU column a few times a second — but audio does not move
+on a human timescale, so this tab runs at 50fps. Nothing else was in the way:
+`pw-record` delivers fresh samples at 96Hz, and analysing and drawing a frame
+costs 0.12ms between them.
+
 Capture runs only while the tab is on screen. Needs `numpy`; without it the tab
 is simply dark.
 
@@ -201,7 +207,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 356 tests, about nine seconds
+tests/run-tests             # 357 tests, about nine seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

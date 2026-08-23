@@ -119,6 +119,13 @@ FLASH_ON, FLASH_OFF = 1.5, 0.3
 # only redrawn this often, so a shorter phase aliases against the loop and can
 # come out looking irregular, or hold still altogether.
 TICK = 0.05
+# The spectrum runs faster than the rest of the board. Everything else changes
+# on a human timescale -- a pomodoro cell every three minutes, a CPU column a
+# few times a second -- but audio does not, and 20fps visibly smears it.
+# Measured: pw-record delivers fresh samples at 96Hz, analysing them costs
+# 0.10ms and drawing them 0.02ms, so the frame rate was the only thing in the
+# way.
+SPEC_TICK = 0.02
 
 OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
 YELLOW, CYAN = 13, 33
@@ -808,7 +815,7 @@ class Spectrum:
                 # streams at the right rate, and delivers digital silence.
                 ['pw-record', '--target', target, '-P', 'stream.capture.sink=true',
                  f'--rate={self.RATE}', '--channels=1', '--format=f32',
-                 '--latency=20ms', '-'],
+                 '--latency=10ms', '-'],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except Exception as e:
             print(f'pw-record: {e!r}', flush=True)
@@ -827,12 +834,17 @@ class Spectrum:
 
     def _reader(self, proc):
         """Keep the newest window of samples and nothing else. Falling behind
-        would show a spectrum of what was playing a minute ago."""
+        would show a spectrum of what was playing a minute ago.
+
+        read1() rather than read(): read() waits for the full count and so
+        held the buffer a whole extra chunk behind, 71Hz instead of the 96Hz
+        pw-record was actually delivering.
+        """
         need = self.WINDOW * 4
         buf = b''
         try:
             while proc.poll() is None:
-                chunk = proc.stdout.read(2048)
+                chunk = proc.stdout.read1(8192)
                 if not chunk:
                     break
                 buf = (buf + chunk)[-need:]
@@ -1723,7 +1735,7 @@ def main():
                     # keep the board alive; a bad frame is not worth a restart
                     print(f"tick/render error: {e!r}", flush=True)
                     time.sleep(0.5)
-                time.sleep(TICK)
+                time.sleep(SPEC_TICK if b.mode == M_SPEC else TICK)
         except KeyboardInterrupt:
             pass
         finally:

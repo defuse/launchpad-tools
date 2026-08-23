@@ -46,7 +46,15 @@ def test_drawing_the_tab_starts_a_capture_of_the_current_output(spec, mod):
     assert captures() == [['pw-record', '--target', 'game_stereo',
                            '-P', 'stream.capture.sink=true',
                            f'--rate={mod.Spectrum.RATE}', '--channels=1',
-                           '--format=f32', '--latency=20ms', '-']]
+                           '--format=f32', '--latency=10ms', '-']]
+
+
+def test_the_spectrum_tab_is_drawn_faster_than_the_rest_of_the_board(mod):
+    """Everything else changes on a human timescale; audio does not, and the
+    frame rate was the only thing limiting it -- capture delivers at 96Hz and
+    a frame of analysis and drawing costs a tenth of a millisecond."""
+    assert mod.SPEC_TICK < mod.TICK
+    assert mod.SPEC_TICK >= 0.01, 'still slower than the pads can be sent'
 
 
 def test_capture_asks_for_the_monitor_side_of_the_sink(spec):
