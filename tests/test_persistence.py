@@ -5,24 +5,24 @@ import pytest
 from lpharness import load_pomodoro, new_board, FakeOut
 
 
-def test_roundtrip_rows_toggles_habits_mode(mod, board, state_file):
+def test_roundtrip_rows_todo_habits_mode(mod, board, state_file):
     board.rows[2] = {'state': mod.RUNNING, 'started': 1_000_123.0}
     board.rows[4] = {'state': mod.CLAIMED, 'started': 0.0}
-    board.toggles[(6, 3)] = 2
+    board.todo[3] = {'name': 'ship it', 'state': 2}
     board.mode = mod.M_HAB2
     board.habit_sets['2']['3,1'] = {'name': 'gym', 'colour': 33, 'state': 1}
     assert board._flush() is True
 
     d = json.loads(state_file.read_text())
     assert d['rows']['2'] == {'state': 'running', 'started': 1_000_123.0}
-    assert d['toggles'] == {'6,3': 2}
+    assert d['todo'][3] == {'name': 'ship it', 'state': 2}
     assert d['mode'] == mod.M_HAB2
     assert d['schema'] == 3
 
     fresh = new_board(mod, FakeOut())
     assert fresh.rows[2] == {'state': mod.RUNNING, 'started': 1_000_123.0}
     assert fresh.rows[4]['state'] == mod.CLAIMED
-    assert fresh.toggles == {(6, 3): 2}
+    assert fresh.todo[3] == {'name': 'ship it', 'state': 2}
     assert fresh.mode == mod.M_HAB2
     assert fresh.habit_sets['2']['3,1']['name'] == 'gym'
 
@@ -30,7 +30,7 @@ def test_roundtrip_rows_toggles_habits_mode(mod, board, state_file):
 def test_missing_file_gives_clean_defaults(mod):
     b = new_board(mod, FakeOut())
     assert all(b.rows[r] == {'state': mod.IDLE, 'started': 0.0} for r in mod.POMO_ROWS)
-    assert b.toggles == {}
+    assert b.todo == mod.blank_todo()
     assert b.mode == mod.M_POMO
     assert set(b.habit_sets) == {str(m) for m in mod.HAB_MODES}
 
@@ -51,7 +51,7 @@ def test_partial_load_still_restores_rows(state_file, clock, capsys):
     """Rows load first; junk further down must not cost us the timers."""
     state_file.write_text(json.dumps({
         'rows': {'3': {'state': 'running', 'started': 999.0}},
-        'toggles': {'not-a-pair': 1},          # blows up the toggles comprehension
+        'todo': 'not a list',                  # blows up the todo loop
         'schema': 3}))
     m = load_pomodoro(state_file, clock)
     b = new_board(m, FakeOut())

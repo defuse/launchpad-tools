@@ -134,6 +134,10 @@ TICK = 0.05
 SPEC_TICK = 0.02
 
 OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
+# A done todo item is a lighter green than a claimed pomodoro: the two rows sit
+# one above the other, and the same green in both reads as one block. Sent as
+# RGB, since the palette has no green that pale.
+TODO_DONE = (80, 127, 90)
 YELLOW, CYAN = 13, 33
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
@@ -162,6 +166,10 @@ HAB_ROWS = [2, 3, 4, 5, 6, 7]
 HOLD_CYCLE  = 1.0         # hold this long to advance a habit's state
 POPUP = os.path.expanduser('~/.local/bin/habit-popup')
 MACHINE_POPUP = os.path.expanduser('~/.local/bin/machine-popup')
+POMO_POPUP = os.path.expanduser('~/.local/bin/pomo-popup')
+# What the pads are showing, in CSS, for the window that mirrors them
+PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
+           BLUE: '#5a7bff', TODO_DONE: '#a0feb4'}
 
 # ---- layout ---------------------------------------------------------------
 # Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
@@ -203,7 +211,8 @@ BREAK    = Timer(step=60, idle=BLUE, fill=BLUE, chime='break.wav',
 
 BAR_ROW    = 1                                # the top row is an elapsed-time bar
 POMO_ROWS  = [2, 3, 4, 5]
-TOGGLE_ROWS= [6]
+TODO_ROW   = 6                                # the todo list, one item per pad
+TOGGLE_ROWS= [TODO_ROW]                       # what the layout table still calls it
 BREAK_ROW  = 7
 TIMERS     = {**{r: POMODORO for r in POMO_ROWS}, BREAK_ROW: BREAK}
 TIMER_ROWS = list(TIMERS)
@@ -673,6 +682,27 @@ def snake(row, step, width):
     return step if row % 2 == 0 else width - 1 - step
 
 
+def blank_todo():
+    """Eight empty slots. A slot always exists; only its name may be empty."""
+    return [{'name': '', 'state': 0} for _ in range(CELLS)]
+
+
+def move_todo(items, src, dst):
+    """Move one slot to another position, shifting whatever is in the way.
+
+    A drag is a move, not a swap: taking the item out and putting it back in
+    shifts everything between it and its destination by one, in whichever
+    direction that happens to be. Names and states travel together because a
+    slot is one object -- a state left behind would belong to the item that
+    slid into its place.
+    """
+    if not (0 <= src < len(items) and 0 <= dst < len(items)) or src == dst:
+        return list(items)
+    out = list(items)
+    out.insert(dst, out.pop(src))
+    return out
+
+
 def centred(n):
     """Column the first of `n` indicators sits at, centred across the row.
 
@@ -1086,7 +1116,7 @@ class Board:
         self.out = out
         self.shown = {}                        # pad -> (channel, colour)
         self.rows = {r: {'state': IDLE, 'started': 0.0} for r in TIMER_ROWS}
-        self.toggles = {}                      # (row,col) -> 0/1/2
+        self.todo = blank_todo()               # eight slots: name and state
         # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
         # every tab reuses the same 64 physical pads, so note 61 is both habit
         # cell (2,0) and pomodoro row 2's start pad. A press must only ever be
@@ -1098,7 +1128,10 @@ class Board:
         self._hold_count = {}                  # note -> cycles already fired while held
         self._popup = None                     # resident peek window (daemon)
         self._machine_popup = None             # ...and the machine one
-        self._peeking = False
+        self._pomo_popup = None                # ...and the pomodoro one
+        self._pomo_sent = None                 # the last frame it was sent
+        self._peeking = False                  # a pad is being held for a look
+        self._window = None                    # the tab whose window is pinned open
         self._popup_mode = M_HAB               # which table the window is showing
         self._editing = None                   # (r,c) while the edit window is up
         self._cpu_prev = None
@@ -1151,6 +1184,84 @@ class Board:
             self._machine_popup.stdin.flush()
         except Exception:
             self._machine_popup = None
+
+    def _pomo_cmd(self, line):
+        """Talk to the pomodoro window, starting it if it is not there."""
+        if not self._pomo_popup or self._pomo_popup.poll() is not None:
+            try:
+                env = dict(os.environ)
+                env.setdefault('DISPLAY', ':0')
+                self._pomo_popup = subprocess.Popen(
+                    [POMO_POPUP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    text=True, env=env, bufsize=1)
+                threading.Thread(target=self._pomo_reader, daemon=True).start()
+            except Exception:
+                self._pomo_popup = None
+                return
+        try:
+            self._pomo_popup.stdin.write(line + '\n')
+            self._pomo_popup.stdin.flush()
+        except Exception:
+            self._pomo_popup = None
+
+    def _pomo_reader(self):
+        """Edits from the pomodoro window: names, states, moves and clear."""
+        pr = self._pomo_popup
+        try:
+            for line in pr.stdout:
+                f = line.rstrip('\n').split('\t')
+                if f[0] == 'closed':
+                    self._window = None
+                elif f[0] == 'set' and len(f) == 3:
+                    self.todo[int(f[1])]['name'] = f[2].strip()
+                    self.save()
+                elif f[0] == 'state' and len(f) == 3:
+                    self.todo[int(f[1])]['state'] = int(f[2]) % 3
+                    self.save()
+                elif f[0] == 'move' and len(f) == 3:
+                    self.todo = move_todo(self.todo, int(f[1]), int(f[2]))
+                    self.save()
+                    self._pomo_send()
+                elif f[0] == 'clear':
+                    self.clear_todo()
+        except Exception as e:
+            print(f'pomo reader stopped: {e!r}', flush=True)
+
+    def clear_todo(self):
+        """Every slot back to empty and unstarted -- the button in the window,
+        and what a reset of this tab does to the row."""
+        self.todo = blank_todo()
+        self.save()
+        self._pomo_send()
+
+    def _pomo_send(self):
+        """Mirror the pomodoro tab into the window, if it is open."""
+        if self._window != M_POMO:
+            return
+        now = time.time()
+        rows = []
+        for r in TIMER_ROWS:
+            st = self.rows[r]
+            t = TIMERS[r]
+            done = (min(int((now - st['started']) // t.step), CELLS - 1)
+                    if st['state'] == RUNNING else 0)
+            cells = []
+            for c in range(CELLS):
+                if st['state'] == RUNNING:
+                    cells.append(PAD_HEX[t.fill] if c <= done else PAD_HEX[OFF])
+                elif st['state'] == ELAPSED:
+                    cells.append(PAD_HEX[t.fill if c == CELLS - 1 else RED])
+                elif st['state'] == CLAIMED:
+                    cells.append(PAD_HEX[t.fill])
+                else:
+                    cells.append(PAD_HEX[t.idle] if c == 0 else PAD_HEX[OFF])
+            rows.append({'row': r, 'name': 'break' if r == BREAK_ROW else f'timer {r - 1}',
+                         'state': st['state'], 'cells': cells})
+        blob = json.dumps({'rows': rows, 'todo': self.todo})
+        if blob == self._pomo_sent:
+            return                           # the frame has not changed; the
+        self._pomo_sent = blob               # window is redrawn 20 times a
+        self._pomo_cmd('data\t' + blob)      # second otherwise, for nothing
 
     def _popup_send_table(self, cmd='data'):
         """Push the table the window is meant to be showing.
@@ -1222,8 +1333,19 @@ class Board:
         try:
             for k, v in d.get('rows', {}).items():
                 if int(k) in self.rows: self.rows[int(k)] = v
-            self.toggles = {tuple(map(int, k.split(','))): v
-                            for k, v in d.get('toggles', {}).items()}
+            self.todo = blank_todo()
+            for i, slot in enumerate(d.get('todo', [])[:CELLS]):
+                self.todo[i] = {'name': str(slot.get('name', '')),
+                                'state': int(slot.get('state', 0))}
+            # older files kept this row as bare toggles, keyed by row,col with
+            # no names; the states are worth carrying over
+            for k, v in d.get('toggles', {}).items():
+                try:
+                    r, c = (int(x) for x in k.split(','))
+                    if r == TODO_ROW and 0 <= c < CELLS and 'todo' not in d:
+                        self.todo[c]['state'] = int(v)
+                except Exception:
+                    pass
             # The selected tab decides what every pad below the top row DOES.
             # Coming back up on the pomodoro tab after a restart meant the next
             # press aimed at a habit landed on a pomodoro row instead, and on an
@@ -1277,7 +1399,7 @@ class Board:
             os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
             with self._lock:
                 blob = json.dumps({'rows': {str(k): v for k, v in self.rows.items()},
-                                   'toggles': {f'{r},{c}': v for (r, c), v in self.toggles.items()},
+                                   'todo': self.todo,
                                    'habit_sets': self.habit_sets,
                                    'mode': self.mode,
                                    'schema': 3})
@@ -1352,7 +1474,9 @@ class Board:
         if self.mode in HAB_MODES:
             return self.render_habits()
         self.render_timers()
-        self.render_toggles()
+        self.render_todo()
+        if self._window == M_POMO:
+            self._pomo_send()
 
     def render_tabs(self):
         """Mode row: one pad per mode (sky = selected), red reset on the right.
@@ -1690,11 +1814,18 @@ class Board:
                 for c in range(CELLS):
                     self.set(pad(r, c), t.idle if c == 0 else OFF)
 
-    def render_toggles(self):
-        for r in TOGGLE_ROWS:
-            for c in range(CELLS):
-                v = self.toggles.get((r, c), 0)
-                self.set(pad(r, c), (OFF, RED, GREEN)[v])
+    def render_todo(self):
+        """One pad per todo slot. A named slot that has not been started is
+        white -- the same language the habit pads use -- and an unnamed one is
+        dark, but both still carry a state."""
+        for c in range(CELLS):
+            slot = self.todo[c]
+            state = slot.get('state', 0)
+            if state:
+                colour = (OFF, RED, TODO_DONE)[state]
+            else:
+                colour = WHITE if slot.get('name') else OFF
+            self.set(pad(TODO_ROW, c), colour)
 
     # --- input -------------------------------------------------------------
     def tick(self):
@@ -1871,13 +2002,12 @@ class Board:
                                                  # a pad was let go on another tab
 
         if note == pad(FUNC_ROW, RESET_COL) and got is not None:
-            # One pad, two jobs, told apart purely by how long it was down:
-            # a quick tap dismisses the habit window, a 2s hold resets the tab.
+            # One pad, two jobs, told apart purely by how long it was down: a
+            # tap opens or closes this tab's window, a 2s hold resets the tab.
             if time.time() - got[0] >= RESET_HOLD:
                 self.reset()
-            elif self._editing:
-                self._popup_cmd('hide')
-                self._editing = None
+            else:
+                self.toggle_window()
             return
 
         if self._peeking:
@@ -1928,11 +2058,48 @@ class Board:
             # what the colour will not
             self.machine_peek(lr, lc)
         elif widget is Widget.TOGGLE:
-            self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
+            self.todo[lc]['state'] = (self.todo[lc].get('state', 0) + 1) % 3
             self.save()
+            self._pomo_send()
         # The read-only widgets -- the bar and the meters -- and any row a tab
         # leaves dark have no gesture at all, by construction rather than by a
         # guard that someone has to remember to write.
+
+    def toggle_window(self):
+        """Open the window this tab has, or close it if it is already up.
+
+        Every tab that has something worth a screen has one: the habit grids,
+        the machine readout, the pomodoro mirror. The meters and the spectrum
+        do not, and the pad does nothing there rather than opening something
+        empty.
+        """
+        if self._window is not None:
+            self.close_window()
+            return
+        if self.mode in HAB_MODES:
+            r, c = self._editing or (HAB_ROWS[0], 0)
+            self.edit_habit(r, c)
+        elif self.mode == M_POMO:
+            self._window, self._pomo_sent = M_POMO, None
+            self._pomo_send()
+            self._pomo_cmd('show')
+            return
+        elif self.mode == M_MACH:
+            self._machine_cmd('data\t' + json.dumps(self.machine_cells(self.machine.snap)))
+            self._machine_cmd(f'show\t{DISK_ROW}\t{centred(len(self.machine.snap.disks))}')
+        else:
+            return                               # nothing to show for a meter
+        self._window = self.mode
+
+    def close_window(self):
+        was, self._window = self._window, None
+        if was in HAB_MODES:
+            self._popup_cmd('hide')
+            self._editing = None
+        elif was == M_MACH:
+            self._machine_cmd('hide')
+        elif was == M_POMO:
+            self._pomo_cmd('hide')
 
     def reset(self):
         """Reset only what the CURRENT mode owns.
@@ -1948,7 +2115,7 @@ class Board:
         elif self.mode == M_POMO:
             for r in TIMER_ROWS:
                 self.rows[r] = {'state': IDLE, 'started': 0.0}
-            self.toggles = {}
+            self.clear_todo()
         else:
             return                             # the meters have nothing to reset
         self.save()

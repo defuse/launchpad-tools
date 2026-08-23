@@ -45,7 +45,7 @@ b  pale blue    c  the habit's own colour    *  blinking
  3   G  G  G* ·  ·  ·  ·  ·     running — 3 min per pad
  4   R  R  R  R  R  R  R  G     elapsed — green claims it, red writes it off
  5   G  G  G  G  G  G  G  G     claimed
- 6   ·  R  G  ·  ·  ·  ·  ·     toggles — press cycles off / red / green
+ 6   W  R  G  ·  ·  ·  ·  ·     todo — named, started, done, empty
  7   B  B  B* ·  ·  ·  ·  ·     break — 1 min per pad
 ```
 
@@ -61,6 +61,16 @@ The break row at the bottom is the same machine with a different length and
 palette: eight minutes, blue instead of green, with a warning two minutes from
 the end.
 
+Row 6 is an eight-slot todo list. A slot always exists and always has a state,
+so a pad is dark when it is empty and unstarted, white once it has a name, and
+red then green as you start and finish it — a state on an unnamed slot is
+allowed and shows. Pressing a pad cycles its state; the names are typed in the
+window.
+
+**Tap the red pad** to open the window for whichever tab you are on — the habit
+grid, the machine readout, or the pomodoro mirror — and tap it again to close
+it. Holding it for two seconds still resets the tab.
+
 Chimes are synthesised (see `share/make-sounds`) and distinguishable by count,
 so you can tell what happened without looking:
 
@@ -70,6 +80,20 @@ so you can tell what happened without looking:
 | two fast, an octave up | two minutes of break left |
 | three strikes | a pomodoro finished |
 | four strikes | a break finished |
+
+### The pomodoro window
+
+A mirror of the pads, annotated with what you can do *now*: an idle row is told
+how to start, a running one how to abandon, an elapsed one how to claim or
+write it off. A hint for something that is not currently possible would be a
+hint in the way, so nothing is said about claiming until there is something to
+claim.
+
+The todo list is edited here — type a name, double-click to cycle a state, drag
+a slot to move it. A drag is a *move*, not a swap: everything between the slot
+and where it lands shifts by one, in whichever direction that turns out to be,
+and each slot carries its own state along with it. `clear list` empties them
+all.
 
 ## Habits
 
@@ -284,7 +308,7 @@ cd launchpad-tools
 ./install.sh
 ```
 
-That symlinks the four programs into `~/.local/bin`, copies the chimes to
+That symlinks the five programs into `~/.local/bin`, copies the chimes to
 `~/.local/share/launchpad-pomodoro/`, and enables a systemd user service. Since
 they are symlinks, `git pull` updates what is installed. Nothing needs root and
 nothing is written outside `$HOME`.
@@ -301,7 +325,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 434 tests, about thirteen seconds
+tests/run-tests             # 460 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

@@ -99,15 +99,15 @@ def test_pressing_the_day_bar_on_the_pomodoro_tab_starts_nothing(mod, out):
         b.release(mod.pad(mod.BAR_ROW, c))
     assert mod.BAR_ROW not in b.rows
     assert all(st['state'] == mod.IDLE for st in b.rows.values())
-    assert b.toggles == {}
+    assert b.todo == mod.blank_todo()
 
 
 def test_the_bar_is_read_only_on_every_tab_that_has_one(mod, out):
     for tab in mod.BARS:
         b = new_board(mod, out)
         b.mode = tab
-        before = (dict(b.rows), dict(b.toggles), dict(b.habits))
+        before = (dict(b.rows), list(b.todo), dict(b.habits))
         b.press(mod.pad(mod.BAR_ROW, 0))
         b.release(mod.pad(mod.BAR_ROW, 0))
-        assert (b.rows, b.toggles, b.habits) == before
+        assert (b.rows, list(b.todo), b.habits) == before
         assert b._editing is None

@@ -233,14 +233,43 @@ def test_reset_pad_needs_the_full_hold(board, mod, clock):
     assert board.rows[ROW]['state'] == mod.IDLE        # released after 2s: reset
 
 
-def test_reset_pad_tap_closes_the_habit_window(board, mod, clock):
-    note = mod.pad(mod.FUNC_ROW, mod.RESET_COL)
-    board.mode = mod.M_HAB
-    board._editing = (2, 0)
+def tap(board, mod, clock, note=None):
+    note = note if note is not None else mod.pad(mod.FUNC_ROW, mod.RESET_COL)
     board.press(note)
     clock.advance(0.2)
     board.release(note)
-    assert board._editing is None                    # a tap dismisses the window
+
+
+def test_reset_pad_tap_toggles_this_tab_window(board, mod, clock):
+    """One pad, two jobs: a tap is the window, a two second hold is the reset."""
+    board.mode = mod.M_HAB
+    tap(board, mod, clock)
+    assert board._window == mod.M_HAB and board._editing is not None
+    tap(board, mod, clock)
+    assert board._window is None and board._editing is None
+
+
+def test_reset_pad_tap_opens_the_machine_window(board, mod, clock):
+    board.mode = mod.M_MACH
+    board.machine.snap = mod.Snapshot(disks=(('sda', 'ok'),))
+    tap(board, mod, clock)
+    assert board._window == mod.M_MACH
+
+
+def test_reset_pad_tap_opens_the_pomodoro_window(board, mod, clock):
+    board.mode = mod.M_POMO
+    tap(board, mod, clock)
+    assert board._window == mod.M_POMO
+    tap(board, mod, clock)
+    assert board._window is None
+
+
+@pytest.mark.parametrize('mode', ['M_SPEC', 'M_SYS', 'M_NET'])
+def test_a_tab_with_nothing_to_show_opens_nothing(board, mod, clock, mode):
+    """Rather than an empty window nobody asked for."""
+    board.mode = getattr(mod, mode)
+    tap(board, mod, clock)
+    assert board._window is None
 
 
 def test_reset_pad_tap_does_not_reset(board, mod, clock):
@@ -255,11 +284,11 @@ def test_reset_pad_tap_does_not_reset(board, mod, clock):
 def test_reset_is_scoped_to_the_pomodoro_tab(board, mod, clock):
     for r in mod.POMO_ROWS:
         board.rows[r] = {'state': mod.RUNNING, 'started': clock.time()}
-    board.toggles[(6, 0)] = 1
+    board.todo[0] = {'name': 'x', 'state': 1}
     board.mode = mod.M_POMO
     board.reset()
     assert all(board.rows[r] == {'state': mod.IDLE, 'started': 0.0} for r in mod.POMO_ROWS)
-    assert board.toggles == {}
+    assert board.todo == mod.blank_todo()
 
 
 @pytest.mark.parametrize('mode_name', ['M_SYS', 'M_NET'])
@@ -285,17 +314,17 @@ def test_reset_on_a_habit_tab_clears_states_only(board, mod, clock):
 
 # ---- toggles -------------------------------------------------------------
 
-def test_toggle_rows_cycle(board, mod):
-    p = mod.pad(6, 2)
+def test_todo_pads_cycle_their_state(board, mod):
+    p = mod.pad(mod.TODO_ROW, 2)
     for expected in (1, 2, 0, 1):
         board.press(p)
-        assert board.toggles[(6, 2)] == expected
+        assert board.todo[2]['state'] == expected
 
 
 def test_toggles_are_inert_off_the_pomodoro_tab(board, mod):
     board.mode = mod.M_SYS
     board.press(mod.pad(6, 2))
-    assert board.toggles == {}
+    assert board.todo == mod.blank_todo()
 
 
 # ---- break row: same machine, shorter and blue -----------------------------
@@ -351,14 +380,95 @@ def test_break_row_claim_turns_the_row_blue(board, mod, clock):
                for c in range(mod.CELLS))
 
 
-def test_row_above_the_break_is_still_a_toggle_row(board, mod):
-    assert mod.TOGGLE_ROWS == [6]
-    assert mod.BREAK_ROW not in mod.TOGGLE_ROWS
+def test_the_todo_row_sits_above_the_break(board, mod):
+    assert mod.TODO_ROW == 6 and mod.BREAK_ROW not in mod.TOGGLE_ROWS
     board.mode = mod.M_POMO
-    for expected in (mod.RED, mod.GREEN, mod.OFF):
-        board.press(mod.pad(6, 0)); board.release(mod.pad(6, 0))
+    for expected in (mod.RED, mod.TODO_DONE, mod.OFF):
+        board.press(mod.pad(mod.TODO_ROW, 0)); board.release(mod.pad(mod.TODO_ROW, 0))
         board.shown.clear(); board.render()
-        assert board.shown[mod.pad(6, 0)][1] == expected
+        assert board.shown[mod.pad(mod.TODO_ROW, 0)][1] == expected
+
+
+# ---- the todo list -------------------------------------------------------
+
+@pytest.mark.parametrize('name,state,colour', [
+    ('',      0, 'OFF'),         # a slot with nothing in it is dark
+    ('ship',  0, 'WHITE'),       # named and not started, like an untouched habit
+    ('',      1, 'RED'),         # a state without a name is still a state
+    ('ship',  1, 'RED'),
+    ('',      2, 'TODO_DONE'),
+    ('ship',  2, 'TODO_DONE'),
+])
+def test_the_four_kinds_of_todo_cell(board, mod, name, state, colour):
+    board.mode = mod.M_POMO
+    board.todo[3] = {'name': name, 'state': state}
+    board.shown.clear(); board.render()
+    assert board.shown[mod.pad(mod.TODO_ROW, 3)][1] == getattr(mod, colour)
+
+
+def test_done_is_a_lighter_green_than_a_claimed_pomodoro(mod):
+    """The two rows are adjacent; the same green in both reads as one block."""
+    assert mod.TODO_DONE != mod.GREEN
+    assert isinstance(mod.TODO_DONE, tuple), 'no palette green is that pale'
+
+
+def test_clearing_empties_every_slot(board, mod):
+    board.todo[1] = {'name': 'a', 'state': 2}
+    board.todo[5] = {'name': '', 'state': 1}
+    board.clear_todo()
+    assert board.todo == mod.blank_todo()
+
+
+def test_resetting_the_pomodoro_tab_clears_the_list(board, mod):
+    board.mode = mod.M_POMO
+    board.todo[0] = {'name': 'a', 'state': 1}
+    board.reset()
+    assert board.todo == mod.blank_todo()
+
+
+# ---- dragging a slot moves it, and everything in the way shifts ----------
+
+def names(items):
+    return [i['name'] for i in items]
+
+
+def test_dragging_right_shifts_the_ones_it_passes_left(mod):
+    items = [{'name': n, 'state': 0} for n in 'abcdefgh']
+    assert names(mod.move_todo(items, 1, 4)) == list('acdebfgh')
+
+
+def test_dragging_left_shifts_the_ones_it_passes_right(mod):
+    items = [{'name': n, 'state': 0} for n in 'abcdefgh']
+    assert names(mod.move_todo(items, 5, 2)) == list('abfcdegh')
+
+
+def test_a_slot_carries_its_state_with_it(mod):
+    """A state left behind would belong to whichever item slid into its place."""
+    items = [{'name': n, 'state': i % 3} for i, n in enumerate('abcdefgh')]
+    moved = mod.move_todo(items, 0, 3)
+    assert moved[3] == {'name': 'a', 'state': 0}
+    assert [i['state'] for i in moved] == [1, 2, 0, 0, 1, 2, 0, 1]
+
+
+@pytest.mark.parametrize('src,dst', [(0, 7), (7, 0), (3, 4), (4, 3)])
+def test_a_move_never_loses_or_duplicates_a_slot(mod, src, dst):
+    items = [{'name': n, 'state': 0} for n in 'abcdefgh']
+    moved = mod.move_todo(items, src, dst)
+    assert sorted(names(moved)) == list('abcdefgh')
+    assert len(moved) == 8
+    assert moved[dst]['name'] == 'abcdefgh'[src]
+
+
+@pytest.mark.parametrize('src,dst', [(2, 2), (-1, 3), (3, 99), (0, 8)])
+def test_a_move_that_means_nothing_changes_nothing(mod, src, dst):
+    items = [{'name': n, 'state': 0} for n in 'abcdefgh']
+    assert names(mod.move_todo(items, src, dst)) == list('abcdefgh')
+
+
+def test_moving_does_not_mutate_what_it_was_given(mod):
+    items = [{'name': n, 'state': 0} for n in 'abcdefgh']
+    mod.move_todo(items, 0, 5)
+    assert names(items) == list('abcdefgh'), 'the caller keeps its own list'
 
 
 def test_break_and_pomodoro_have_different_chimes(board, mod, clock):
