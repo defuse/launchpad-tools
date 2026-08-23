@@ -1,8 +1,9 @@
 # launchpad-tools
 
 A Novation Launchpad Mini MK3 as a desk board: pomodoro and break timers, daily
-and weekly habit trackers, and CPU/network meters. The top row switches between
-them; everything else keeps running in the background.
+and weekly habit trackers, disk/filesystem/temperature and audio controls, an
+audio spectrum, and CPU/network meters. The top row switches between them;
+everything else keeps running in the background.
 
 > **Written by an AI (Claude Opus) and not reviewed by a human.** It runs as a
 > systemd user service, opens a USB MIDI device, spawns a Tk window and writes
@@ -142,10 +143,8 @@ say — a press that fails, or that something else overrides a moment later,
 cannot leave the board asserting a state it only asked for.
 
 All of it comes from a background poller. Nothing is read during a frame:
-`easyeffects -b 3` alone takes a quarter of a second, and a frame is 50ms. That
-query is never polled at all, in fact — it starts a second EasyEffects to ask
-the first, and that closes the window the first one has open. The bypass state
-comes from the config file EasyEffects writes it to instead.
+`easyeffects -b 3 -a output` alone takes a quarter of a second, and a frame is
+50ms.
 
 ## Spectrum
 
