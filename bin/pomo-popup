@@ -38,6 +38,8 @@ YELLOW_B = '#ffd21a'
 STATE_BG = {0: CELL_BG, 1: '#3a1618', 2: '#1b3a24'}
 ROW_H, TODO_H = 96, 150
 PAD_W, SLOT_W = 108, 150                   # a pad, and the todo slot under it
+MONO = ('DejaVu Sans Mono', 11)            # todo names: fixed pitch, small
+DRAG_SLOP = 6                              # px of wobble that is still a click
 
 # What to say about a row, by the state it is actually in. Anything else would
 # be an instruction for a button that is not there.
@@ -87,9 +89,11 @@ class Window:
         self.todo = [{'name': '', 'state': 0} for _ in range(COLS)]
         self.drag_from = None
         self.dragged = False
+        self.grabbed_at = (0, 0)
         self.on_entry = False
         self.ghost = None
         self._painting = False
+        self._built = False
         self._fits = []
         self.root = tk.Tk()
         self.root.title('pomodoro')
@@ -112,6 +116,16 @@ class Window:
         self.root.withdraw()
 
     # ---- geometry --------------------------------------------------------
+    def place(self):
+        """Put the window on the big monitor, every time it is shown.
+
+        Not once at construction: if xrandr is slow or unavailable at that
+        moment the fallback geometry applies and the window spends the rest of
+        the session on whichever monitor 100,100 happens to be.
+        """
+        w, h, x, y = g9_centre_box()
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+
     def fit(self):
         """Keep the frame inside the work area; see habit-popup for why this is
         measured rather than predicted."""
@@ -140,6 +154,7 @@ class Window:
         self.row_lefts = {}
         self.slots, self.entries = {}, {}
 
+        self._built = True
         line = 0
         for info in self.rows:
             self.outer.grid_rowconfigure(line, minsize=ROW_H)
@@ -192,7 +207,7 @@ class Window:
             handle.pack(anchor='nw', padx=8, pady=(4, 0))
             # a Text, not an Entry: an Entry is one line and scrolls sideways,
             # which hides the end of anything that does not fit
-            e = tk.Text(f, font=('DejaVu Sans', 12, 'bold'), bg=CELL_BG, fg=WHITE,
+            e = tk.Text(f, font=MONO, bg=CELL_BG, fg=WHITE,
                         insertbackground=WHITE, relief='flat', width=13, height=1,
                         wrap='word', spacing1=1, spacing3=1, padx=6, pady=2,
                         highlightthickness=0, cursor='xterm')
@@ -234,7 +249,12 @@ class Window:
                 for w in self.slots[c].winfo_children():
                     w.configure(bg=bg)
                 box = self.entries[c]
-                if box.get('1.0', 'end').strip() != slot.get('name', ''):
+                # never rewrite the box with the cursor in it: the board echoes
+                # a normalised name back, and replacing the text underneath a
+                # typist moves the insert point to the start and scrolls the
+                # view -- which reads as the box refusing to grow
+                typing = self.root.focus_get() is box
+                if not typing and box.get('1.0', 'end').strip() != slot.get('name', ''):
                     box.delete('1.0', 'end')
                     box.insert('1.0', slot.get('name', ''))
                 box.configure(fg=WHITE if slot.get('name') else MUTED, bg=bg)
@@ -282,14 +302,21 @@ class Window:
     # ---- drag to move, tap to press --------------------------------------
     def grab(self, col, ev):
         """Start of a gesture on a slot. Which gesture it turns out to be is
-        decided on release: no movement and not in the text box makes it a tap
-        on the pad, movement makes it a drag."""
+        decided on release: no real movement and not in the text box makes it a
+        tap on the pad, movement makes it a drag."""
         self.drag_from = col
         self.dragged = False
+        self.grabbed_at = (ev.x_root, ev.y_root)
         self.on_entry = ev.widget is self.entries.get(col)
 
     def drag(self, ev, col):
         if self.drag_from is None:
+            return
+        # a hand moves a few pixels while clicking; treating that as a drag
+        # meant taps on the handle went nowhere, which is worse than a drag
+        # that needs a moment to start
+        ox, oy = self.grabbed_at
+        if not self.dragged and max(abs(ev.x_root - ox), abs(ev.y_root - oy)) < DRAG_SLOP:
             return
         self.dragged = True
         if self.ghost is None:
@@ -346,16 +373,21 @@ class Window:
         if p[0] == 'data' and len(p) > 1:
             blob = json.loads(p[1])
             rows = blob.get('rows', [])
-            rebuild = [r['row'] for r in rows] != [r['row'] for r in self.rows]
+            # rebuild only when the set of rows changes: it destroys every
+            # widget, and doing that on each frame would take the text box out
+            # from under whoever is typing in it
+            rebuild = ([r['row'] for r in rows] != [r['row'] for r in self.rows]
+                       or not self._built)
             self.rows = rows
             self.todo = blob.get('todo', self.todo)
-            if rebuild or not self.row_pads:
+            if rebuild:
                 self.build()
             self.paint()
         elif p[0] == 'show':
-            if not self.row_pads:
+            if not self._built:
                 self.build()
             self.paint()
+            self.place()
             self.root.deiconify()
             self.root.lift()
             self.root.attributes('-topmost', True)

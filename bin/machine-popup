@@ -113,6 +113,16 @@ class Grid:
         self.root.withdraw()
 
     # ---- geometry --------------------------------------------------------
+    def place(self):
+        """Put the window on the big monitor, every time it is shown.
+
+        Not once at construction: if xrandr is slow or unavailable at that
+        moment the fallback geometry applies and the window spends the rest of
+        the session on whichever monitor 100,100 happens to be.
+        """
+        w, h, x, y = g9_centre_box()
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+
     def fit(self):
         """Keep the frame inside the work area. Same reasoning as habit-popup:
         geometry() sizes the client area and the WM adds its own furniture, so
@@ -164,6 +174,7 @@ class Grid:
         elif cmd == 'show' and len(p) > 2:
             self.focus_rc = (int(p[1]), int(p[2]))
             self.paint()
+            self.place()
             self.root.deiconify()
             self.root.lift()
             self.root.attributes('-topmost', True)

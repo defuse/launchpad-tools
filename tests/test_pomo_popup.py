@@ -115,3 +115,68 @@ def test_a_hidden_window_is_not_measured(win):
     win.root.update()
     win.fit_slots()
     assert max(int(b.cget('height')) for b in win.entries.values()) > 1
+
+
+ROWS_ONE = [{'row': 2, 'name': 't1', 'state': 'idle', 'cells': ['#191920'] * 8}]
+
+
+def test_typing_grows_the_box_line_by_line(win):
+    """It scrolled instead of growing: the board echoes the name back and the
+    repaint replaced the text under the cursor, which reset the view."""
+    load(win, [''] * 8, rows=ROWS_ONE)
+    box = win.entries[0]
+    box.focus_set()
+    win.root.update()
+    text = ''
+    for word in 'fix the subwoofer mute so it stops pulling the speakers'.split():
+        text = (text + ' ' + word).strip()
+        box.delete('1.0', 'end'); box.insert('1.0', text)
+        win.name_typed(0)
+        win.root.update()
+        assert int(box.cget('height')) >= lines(box), f'scrolled at {text!r}'
+
+
+def test_an_echo_does_not_move_the_cursor(win):
+    load(win, [''] * 8, rows=ROWS_ONE)
+    box = win.entries[0]
+    box.focus_set(); box.insert('1.0', 'half typed'); win.root.update()
+    box.mark_set('insert', 'end')
+    win.handle('data\t' + json.dumps(
+        {'rows': ROWS_ONE, 'todo': [{'name': 'half typed', 'state': 0}] + [{'name': '', 'state': 0}] * 7}))
+    win.root.update()
+    assert box.index('insert') != '1.0', 'the box being typed in was rewritten'
+
+
+def test_a_data_frame_does_not_rebuild_the_widgets(win):
+    """Rebuilding takes the text box out from under whoever is typing."""
+    load(win, [''] * 8, rows=ROWS_ONE)
+    before = win.entries[0]
+    win.handle('data\t' + json.dumps({'rows': ROWS_ONE, 'todo': [{'name': 'x', 'state': 0}] * 8}))
+    assert win.entries[0] is before
+
+
+def test_the_names_are_in_a_fixed_pitch_font(win):
+    load(win, rows=ROWS_ONE)
+    assert 'Mono' in str(win.entries[0].cget('font'))
+
+
+def test_a_wobble_while_clicking_is_still_a_click(win):
+    """A hand moves a few pixels during a click; treating that as a drag meant
+    taps on the handle went nowhere."""
+    load(win, rows=ROWS_ONE)
+    ev = types.SimpleNamespace(x_root=500, y_root=400, widget=win.slots[1])
+    win.grab(1, ev)
+    win.drag(types.SimpleNamespace(x_root=503, y_root=402), 1)
+    assert not win.dragged, 'three pixels is not a drag'
+    win.drag(types.SimpleNamespace(x_root=560, y_root=402), 1)
+    assert win.dragged, 'sixty is'
+
+
+def test_a_window_is_placed_when_it_is_shown(win):
+    """Not once at construction: a slow xrandr there would leave it on
+    whichever monitor the fallback lands on for the whole session."""
+    seen = []
+    win.mod.g9_centre_box = lambda: (seen.append(1), (900, 600, 40, 50))[1]
+    win.handle('show')
+    win.root.update()
+    assert seen, 'show asked where to put itself'

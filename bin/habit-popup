@@ -150,8 +150,15 @@ class Grid:
             self.root.bind_all(seq, lambda ev: (self.pull_names(), 'break')[1])
         self.root.withdraw()
 
+    def place(self):
+        """Put the window on the big monitor, every time it is shown -- not
+        once at construction, where a slow xrandr leaves it on whichever
+        monitor the fallback geometry lands on for the rest of the session."""
+        w, h, x, y = g9_centre_box()
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
+
     def fit(self):
-        """Trim the window so its frame stops at the edge of the work area.
+        """Trim the window so its frame stops at the edge of the work area."
 
         geometry() sizes the client area, but the WM adds a titlebar and a
         border and where it puts them varies -- xfwm places the same request
@@ -378,7 +385,7 @@ class Grid:
         elif cmd in ('show','edit'):
             r,c = int(p[1]), int(p[2])
             self.mode, self.focus_rc = cmd, (r,c)
-            self.paint(); self.root.deiconify(); self.root.lift()
+            self.place(); self.paint(); self.root.deiconify(); self.root.lift()
             self.root.update_idletasks(); self.fit()
             # xfwm only publishes _NET_FRAME_EXTENTS once it has drawn the
             # frame, so the first pass usually measures a 0 border and lands a
