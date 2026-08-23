@@ -322,8 +322,9 @@ BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK}
 
 
 # ---- machine and audio ----------------------------------------------------
-DISK_ROW, FS_ROW, TEMP_ROW, CTRL_ROW = 2, 3, 5, 7
-MACH_BLANK = [4, 6]                        # reserved, drawn dark
+DISK_ROW, FS_ROW, TEMP_ROW = 2, 3, 5
+MEDIA_ROW, CTRL_ROW = 6, 7                 # transport above, audio controls below
+MACH_BLANK = [4]                           # reserved, drawn dark
 
 
 class Sensor(NamedTuple):
@@ -405,14 +406,17 @@ class Button(NamedTuple):
     arg:  str
 
 
-# Left to right, one per pad. The remaining None is a deliberate gap: the
-# outputs and sub, the effects toggle and the transport are different jobs and
-# a stray press should not fire the wrong one.
-CONTROLS = (Button('sink', GAME_SINK), Button('sink', HEADSET),
-            Button('sub', ''),
-            Button('effects', ''), None,
-            Button('media', 'Previous'), Button('media', 'PlayPause'),
-            Button('media', 'Next'))
+# One entry per pad, by row. None is a deliberate gap: choosing an output,
+# silencing the sub and bypassing the effects are different jobs, and a stray
+# press should not fire the wrong one. The transport gets a row of its own for
+# the same reason.
+CONTROLS = {
+    MEDIA_ROW: (None, None, None, None, None,
+                Button('media', 'Previous'), Button('media', 'PlayPause'),
+                Button('media', 'Next')),
+    CTRL_ROW:  (Button('sink', GAME_SINK), Button('sink', HEADSET), None,
+                Button('sub', ''), Button('effects', ''), None, None, None),
+}
 SELECTED = BLUE                            # the output you are listening on
 SUB_ON   = WHITE                           # the sub is passing signal
 SUB_MUTE = RED                             # ...and now it is not
@@ -471,7 +475,7 @@ TAB_ROWS = {
     M_HAB:  {Widget.HABIT: HAB_ROWS},
     M_HAB2: {Widget.HABIT: HAB_ROWS},
     M_MACH: {Widget.DISK: [DISK_ROW], Widget.FS: [FS_ROW],
-             Widget.TEMP: [TEMP_ROW], Widget.CONTROL: [CTRL_ROW],
+             Widget.TEMP: [TEMP_ROW], Widget.CONTROL: list(CONTROLS),
              Widget.BLANK: MACH_BLANK},
     M_SPEC: {Widget.SPECTRUM: SPEC_ROWS},
     M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
@@ -1364,38 +1368,42 @@ class Board:
             else:                    self.set(p, GREEN)
 
     def render_controls(self, snap):
-        """Output, effects and transport. Every one of these shows the state
-        the system is actually in, not the last thing this board asked for:
-        change the output in the tray applet and the pads follow.
+        """Output, sub, effects and transport, across their two rows. Every one
+        of these shows the state the system is actually in, not the last thing
+        this board asked for: change the output in the tray applet and the pads
+        follow.
         """
-        for c in range(CELLS):
-            p = pad(CTRL_ROW, c)
-            b = CONTROLS[c] if c < len(CONTROLS) else None
-            if b is None:
-                self.set(p, OFF)                           # deliberate gap
-            elif b.kind == 'sink':
-                name = match(b.arg, snap.sinks)
-                if not name:   self.set(p, OFF)            # unplugged, or gone
-                else:          self.set(p, SELECTED if name == snap.sink else WHITE)
-            elif b.kind == 'sub':
-                if not snap.sub:   self.set(p, OFF)         # no interface, no sub
-                else:              self.set(p, SUB_MUTE if sub_muted(snap.sub)
-                                            else SUB_ON)
-            elif b.kind == 'effects':
-                # Off is off whichever preset would have been loaded; on says
-                # which one is, because getting the room's EQ in headphones
-                # sounds wrong in a way that is easy to miss and hard to place.
-                if not snap.effects:
-                    self.set(p, WHITE)
-                elif snap.preset and snap.preset == snap.headset_preset:
-                    self.set(p, PRESET_HEADSET)
-                else:
-                    self.set(p, PRESET_MAIN)
-            else:
-                self.set(p, PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE)
+        for row, buttons in CONTROLS.items():
+            for c in range(CELLS):
+                b = buttons[c] if c < len(buttons) else None
+                self.set(pad(row, c), self.control_colour(b, snap))
 
-    def control_press(self, col):
-        """Act on the control row.
+    def control_colour(self, b, snap):
+        """What one control pad should be showing. None is a deliberate gap."""
+        if b is None:
+            return OFF
+        if b.kind == 'sink':
+            name = match(b.arg, snap.sinks)
+            if not name:
+                return OFF                                 # unplugged, or gone
+            return SELECTED if name == snap.sink else WHITE
+        if b.kind == 'sub':
+            if not snap.sub:
+                return OFF                                 # no interface, no sub
+            return SUB_MUTE if sub_muted(snap.sub) else SUB_ON
+        if b.kind == 'effects':
+            # Off is off whichever preset would have been loaded; on says which
+            # one is, because getting the room's EQ in headphones sounds wrong
+            # in a way that is easy to miss and hard to place.
+            if not snap.effects:
+                return WHITE
+            if snap.preset and snap.preset == snap.headset_preset:
+                return PRESET_HEADSET
+            return PRESET_MAIN
+        return PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE
+
+    def control_press(self, row, col):
+        """Act on a control pad.
 
         Every action is fired and forgotten, and then read back: a press
         schedules a re-read rather than recording what it asked for, so the
@@ -1403,7 +1411,8 @@ class Board:
         press worked is how the pad came to sit on green while EasyEffects was
         bypassed -- the board asserting a state instead of reporting one.
         """
-        b = CONTROLS[col] if col < len(CONTROLS) else None
+        buttons = CONTROLS.get(row, ())
+        b = buttons[col] if col < len(buttons) else None
         snap = self.machine.snap
         if b is None:
             return
@@ -1697,7 +1706,7 @@ class Board:
         elif widget is Widget.TIMER:
             self.pomo_press(lr, lc)
         elif widget is Widget.CONTROL:
-            self.control_press(lc)
+            self.control_press(lr, lc)
         elif widget is Widget.TOGGLE:
             self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
             self.save()

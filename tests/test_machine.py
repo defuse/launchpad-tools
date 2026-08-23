@@ -170,6 +170,16 @@ SINKS = ('game_stereo', 'alsa_output.usb-AT_ATH-M50xSTS-USB-00.analog-stereo')
 SOURCES = ('alsa_input.usb-AT_ATH-M50xSTS-USB-00.mono-fallback',)
 
 
+def col_of(mod, kind, row=None):
+    """Which column carries a given control. Looked up rather than written
+    down: these pads have moved twice, and every literal is a place to miss."""
+    row = mod.CTRL_ROW if row is None else row
+    for i, b in enumerate(mod.CONTROLS[row]):
+        if b and b.kind == kind:
+            return i
+    raise AssertionError(f'no {kind} pad on row {row}')
+
+
 def audio(mod, **kw):
     return mod.Snapshot(sinks=SINKS, sources=SOURCES, **kw)
 
@@ -190,18 +200,32 @@ def test_an_unplugged_headset_leaves_its_pad_dark(mach, mod):
     assert painted[1] == mod.OFF, 'nothing to switch to'
 
 
-def test_the_gap_stays_dark(mach, mod):
-    """One gap left, between the outputs and the transport: they are different
-    jobs and a stray press should not fire the wrong one."""
+def test_the_outputs_are_kept_apart_from_the_sub_and_effects(mach, mod):
+    """A gap between them: choosing an output and silencing the sub are
+    different jobs, and a stray press should not fire the wrong one."""
     painted = show(mach, mod, audio(mod, sink='game_stereo'), mod.CTRL_ROW)
-    assert painted[4] == mod.OFF
-    assert mod.CONTROLS[4] is None and mod.CONTROLS[2] is not None
+    assert painted[2] == mod.OFF
+    row = mod.CONTROLS[mod.CTRL_ROW]
+    assert [b.kind if b else None for b in row[:5]] == \
+        ['sink', 'sink', None, 'sub', 'effects']
+
+
+def test_the_transport_has_a_row_of_its_own(mach, mod):
+    """Above the audio controls, so a mis-hit skips a track rather than
+    changing what the speakers are doing."""
+    assert mod.MEDIA_ROW == mod.CTRL_ROW - 1
+    row = mod.CONTROLS[mod.MEDIA_ROW]
+    assert [b.kind if b else None for b in row] == \
+        [None] * 5 + ['media'] * 3
+    painted = show(mach, mod, audio(mod, playing=True), mod.MEDIA_ROW)
+    assert painted[:5] == [mod.OFF] * 5
+    assert painted[6] == mod.PLAYING
 
 
 def test_transport_colours(mach, mod):
-    on = show(mach, mod, audio(mod, playing=True), mod.CTRL_ROW)
+    on = show(mach, mod, audio(mod, playing=True), mod.MEDIA_ROW)
     assert on[6] == mod.PLAYING
-    off = show(mach, mod, audio(mod), mod.CTRL_ROW)
+    off = show(mach, mod, audio(mod), mod.MEDIA_ROW)
     assert off[5] == mod.WHITE and off[6] == mod.WHITE and off[7] == mod.WHITE
 
 
@@ -217,12 +241,12 @@ def test_the_effects_pad_shows_which_preset_is_active(mach, mod, effects, preset
     """Getting the room's EQ in headphones sounds wrong in a way that is easy
     to miss and hard to place, so the pad says which one you are hearing."""
     snap = audio(mod, running=True, effects=effects, preset=preset, headset_preset='cans')
-    assert show(mach, mod, snap, mod.CTRL_ROW)[3] == getattr(mod, colour)
+    assert show(mach, mod, snap, mod.CTRL_ROW)[col_of(mod, 'effects')] == getattr(mod, colour)
 
 
 def test_it_is_still_an_on_off_button(mach, mod):
     """The colour reports the preset; the press does not choose one."""
-    press(mach, mod, 3, audio(mod, running=True, effects=True,
+    press(mach, mod, col_of(mod, 'effects'), audio(mod, running=True, effects=True,
                               preset='cans', headset_preset='cans'))
     assert ran('easyeffects') == [['easyeffects', '-b', '1']]
 
@@ -245,11 +269,12 @@ def test_no_bindings_at_all_is_not_an_error(mod, tmp_path, monkeypatch):
 
 
 # ---- pressing it ---------------------------------------------------------
-def press(board, mod, col, snap):
+def press(board, mod, col, snap, row=None):
     board.machine.snap = snap
     FakePopen.instances.clear()
-    board.press(mod.pad(mod.CTRL_ROW, col))
-    board.release(mod.pad(mod.CTRL_ROW, col))
+    p = mod.pad(mod.CTRL_ROW if row is None else row, col)
+    board.press(p)
+    board.release(p)
 
 
 def test_choosing_an_output_sets_the_default_sink(mach, mod):
@@ -291,14 +316,14 @@ def test_pressing_an_absent_output_does_nothing_at_all(mach, mod):
 
 
 def test_pressing_a_gap_does_nothing(mach, mod):
-    press(mach, mod, 2, audio(mod, sink='game_stereo'))
-    press(mach, mod, 4, audio(mod, sink='game_stereo'))
+    press(mach, mod, 2, audio(mod, sink='game_stereo'))          # outputs | sub
+    press(mach, mod, 0, audio(mod, sink='game_stereo'), row=mod.MEDIA_ROW)
     assert ran() == []
 
 
 def test_transport_buttons_talk_to_spotify(mach, mod):
     for col, action in ((5, 'Previous'), (6, 'PlayPause'), (7, 'Next')):
-        press(mach, mod, col, audio(mod))
+        press(mach, mod, col, audio(mod), row=mod.MEDIA_ROW)
         assert ran('gdbus')[0][-1] == f'org.mpris.MediaPlayer2.Player.{action}'
         assert mod.SPOTIFY in ran('gdbus')[0]
 
@@ -309,7 +334,7 @@ def test_transport_buttons_talk_to_spotify(mach, mod):
     (False, False, ['easyeffects', '--gapplication-service']),  # stopped -> started
 ])
 def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, effects, expect):
-    press(mach, mod, 3, audio(mod, running=running, effects=effects))
+    press(mach, mod, col_of(mod, 'effects'), audio(mod, running=running, effects=effects))
     assert ran('easyeffects') == [expect]
     assert mach.machine.snap.effects is effects, 'unchanged until it is read back'
     assert mach.machine.recheck_at > 0
@@ -352,7 +377,7 @@ def test_the_sub_is_two_channels_of_an_interface_not_a_device(mod):
 ])
 def test_the_sub_pad_shows_whether_it_is_muted(mach, mod, volumes, colour):
     painted = show(mach, mod, with_sub(mod, volumes, sink='game_stereo'), mod.CTRL_ROW)
-    assert painted[2] == getattr(mod, colour)
+    assert painted[col_of(mod, 'sub')] == getattr(mod, colour)
 
 
 def wrote(mod):
@@ -370,13 +395,13 @@ def test_the_two_states_leave_the_speakers_at_the_same_loudness(mod):
 
 def test_turning_the_sub_off_gives_the_speakers_their_own_full_level(mach, mod, live):
     live['volumes'] = (mod.SUB_HALF,) * 4 + (0,) * 6       # sub currently on
-    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, sink='game_stereo'))
     assert wrote(mod)[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0]
 
 
 def test_turning_the_sub_on_halves_everything(mach, mod, live):
     live['volumes'] = (mod.SUB_FULL, mod.SUB_FULL, 0, 0) + (0,) * 6
-    press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, MUTED, sink='game_stereo'))
     assert wrote(mod)[:4] == [mod.SUB_HALF] * 4
 
 
@@ -385,11 +410,11 @@ def test_there_is_nothing_to_remember(mach, mod, live):
     can be lost, or restored wrong after a restart."""
     assert not hasattr(mach.machine, '_sub_level')
     live['volumes'] = (mod.SUB_HALF,) * 4 + (0,) * 6
-    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, sink='game_stereo'))
     off = wrote(mod)
     FakePopen.instances.clear()
     live['volumes'] = tuple(off)
-    press(mach, mod, 2, with_sub(mod, MUTED, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, MUTED, sink='game_stereo'))
     on = wrote(mod)
     assert off[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0]
     assert on[:4] == [mod.SUB_HALF] * 4, 'straight back, no history involved'
@@ -397,7 +422,7 @@ def test_there_is_nothing_to_remember(mach, mod, live):
 
 def test_the_other_channels_are_left_alone(mach, mod, live):
     live['volumes'] = (mod.SUB_HALF,) * 4 + (12345,) * 6
-    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, sink='game_stereo'))
     assert wrote(mod)[4:] == [12345] * 6
 
 
@@ -409,7 +434,7 @@ def test_a_stale_snapshot_cannot_write_over_the_speakers(mach, mod, live):
     """
     live['volumes'] = TEN                                  # what is true now
     stale = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)                 # what the poll saw
-    press(mach, mod, 2, with_sub(mod, stale, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, stale, sink='game_stereo'))
     written = wrote(mod)
     assert written[:4] == [mod.SUB_FULL, mod.SUB_FULL, 0, 0], \
         'acted on the fresh read: the sub was on, so this turns it off'
@@ -417,13 +442,13 @@ def test_a_stale_snapshot_cannot_write_over_the_speakers(mach, mod, live):
 
 
 def test_pressing_the_sub_pad_with_no_interface_does_nothing(mach, mod):
-    press(mach, mod, 2, mod.Snapshot(sinks=SINKS, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), mod.Snapshot(sinks=SINKS, sink='game_stereo'))
     assert ran() == []
 
 
 def test_the_sub_pad_reads_back_rather_than_assuming(mach, mod, live):
     before = mach.machine.snap.sub
-    press(mach, mod, 2, with_sub(mod, sink='game_stereo'))
+    press(mach, mod, col_of(mod, 'sub'), with_sub(mod, sink='game_stereo'))
     assert mach.machine.snap.sub == before or mach.machine.snap.sub == TEN
     assert mach.machine.recheck_at > 0
 
