@@ -397,6 +397,7 @@ EE_AUTOLOAD = os.path.expanduser('~/.local/share/easyeffects/autoload/output')
 EE_PRESETS  = os.path.expanduser('~/.local/share/easyeffects/output')
 PRESET_HEADSET = ORANGE                    # effects on, wearing the headset
 PRESET_MAIN    = GREEN                     # effects on, out through the room
+PRESET_OFF     = RED                       # bypassed, or not running at all
 
 
 class Button(NamedTuple):
@@ -1394,7 +1395,7 @@ class Board:
             # one is, because getting the room's EQ in headphones sounds wrong
             # in a way that is easy to miss and hard to place.
             if not snap.effects:
-                return WHITE
+                return PRESET_OFF
             if snap.preset and snap.preset == snap.headset_preset:
                 return PRESET_HEADSET
             return PRESET_MAIN

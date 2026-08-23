@@ -225,8 +225,8 @@ def test_transport_colours(mach, mod):
 
 # ---- which preset is live ------------------------------------------------
 @pytest.mark.parametrize('effects,preset,colour', [
-    (False, 'room',    'WHITE'),           # off is off, whatever would load
-    (False, 'cans',    'WHITE'),
+    (False, 'room',    'PRESET_OFF'),      # off is off, whatever would load
+    (False, 'cans',    'PRESET_OFF'),
     (True,  'room',    'PRESET_MAIN'),
     (True,  'cans',    'PRESET_HEADSET'),
     (True,  '',        'PRESET_MAIN'),     # nothing known: on is on

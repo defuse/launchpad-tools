@@ -104,7 +104,7 @@ unstarted.
  4   ·  ·  ·  ·  ·  ·  ·  ·
  5   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
  6   ·  ·  ·  ·  ·  ·  ·  ·
- 7   B  W  ·  W  G  W  S  W     speakers · headset | sub · effects · prev play next
+ 7   B  W  ·  W  R  W  S  W     speakers · headset | sub · effects · prev play next
 ```
 
 Everything above the bottom row is read-only:
@@ -130,7 +130,7 @@ pad moves between two fixed levels that leave the speakers at the same
 loudness either way — every channel at half with the sub on, the sub's pair at
 zero and the speakers at full with it off. The
 EasyEffects pad is an on/off switch whose colour says which preset is live:
-white off, green for the room preset, orange for the headset one — worked out
+red off, green for the room preset, orange for the headset one — worked out
 from EasyEffects' own autoload bindings, so renaming a preset cannot leave the
 pad lying. Play/pause lights sky blue while Spotify is playing.
 
