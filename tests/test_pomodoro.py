@@ -422,10 +422,18 @@ def test_the_four_kinds_of_todo_cell(board, mod, name, state, colour):
     assert board.shown[mod.pad(mod.TODO_ROW, 3)][1] == getattr(mod, colour)
 
 
-def test_done_is_a_lighter_green_than_a_claimed_pomodoro(mod):
+def test_done_is_a_brighter_green_than_a_claimed_pomodoro(mod):
     """The two rows are adjacent; the same green in both reads as one block."""
     assert mod.TODO_DONE != mod.GREEN
-    assert isinstance(mod.TODO_DONE, tuple), 'no palette green is that pale'
+    assert isinstance(mod.TODO_DONE, tuple), 'no palette green is quite this one'
+
+
+def test_done_is_green_rather_than_near_white(mod):
+    """(80, 127, 90) was so close to grey that the pad read as white, which is
+    exactly what an unstarted named slot looks like -- one state away."""
+    r, g, b = mod.TODO_DONE
+    assert g == 127, 'green at full'
+    assert max(r, b) < g * 0.6, 'and the other two well down, or it washes out'
 
 
 def test_clearing_empties_every_slot(board, mod):

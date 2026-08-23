@@ -45,7 +45,7 @@ def test_holding_a_disk_pad_shows_it_with_that_cell_marked(mach, mod):
     col = mod.centred(3) + 1                                # sdb, second of three
     mach.press(mod.pad(mod.DISK_ROW, col))
     assert window(mod)[-1] == f'show\t{mod.DISK_ROW}\t{col}'
-    assert cells(mod)[(mod.DISK_ROW, col)]['name'] == 'sdb'
+    assert cells(mod)[(mod.DISK_ROW, col)]['name'] == '/dev/sdb'
 
 
 def test_releasing_hides_it(mach, mod):
@@ -87,8 +87,16 @@ def test_a_temperature_names_its_drive_and_kind(mach, mod):
     mach.press(mod.pad(mod.DRIVE_TEMP_ROW, mod.centred(3)))
     c = cells(mod)
     first = mod.centred(3)
-    assert c[(mod.DRIVE_TEMP_ROW, first)]['name'] == 'sda SSD'
-    assert c[(mod.DRIVE_TEMP_ROW, first + 1)]['name'] == 'sdb HDD'
+    assert c[(mod.DRIVE_TEMP_ROW, first)]['name'] == '/dev/sda (SSD)'
+    assert c[(mod.DRIVE_TEMP_ROW, first + 1)]['name'] == '/dev/sdb (HDD)'
+
+
+def test_a_drive_is_named_by_the_path_you_would_type(mach, mod):
+    """/proc/mdstat says sda; everything you would run about it wants
+    /dev/sda."""
+    mach.press(mod.pad(mod.DISK_ROW, mod.centred(3)))
+    c = cells(mod)
+    assert c[(mod.DISK_ROW, mod.centred(3))]['name'] == '/dev/sda'
 
 
 def test_a_filesystem_gives_both_the_size_and_the_share(mach, mod):

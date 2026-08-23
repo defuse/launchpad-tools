@@ -42,7 +42,7 @@ YELLOW_B = '#ffd21a'                       # the held cell, as in habit-popup
 # the control row has no title: a row of buttons naming themselves does not
 # need a word saying they are buttons
 TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps'}
-CELL_H = 210                               # a row's height; the grid centres
+CELL_W, CELL_H = 120, 210                  # a cell; the grid centres and stretches
 GAP_H = 44                                 # ...and a blank row's
 # the size a reading is set at, and what it falls back to if it does not fit
 VALUE_SIZES = (34, 30, 26, 22, 18, 15)
@@ -104,11 +104,16 @@ class Grid:
                 continue
             outer.grid_rowconfigure(i, weight=0, minsize=CELL_H)
             for c in range(COLS):
-                outer.grid_columnconfigure(c, weight=1)
+                # uniform: eight columns of one width, whatever is in them. The
+                # board's pads are all one size and this is a picture of them
+                outer.grid_columnconfigure(c, weight=1, uniform='cell')
                 f = tk.Frame(outer, bg=CELL_BG, highlightthickness=5,
-                             highlightbackground=BG, height=CELL_H)
+                             highlightbackground=BG, width=CELL_W, height=CELL_H)
                 f.grid(row=i, column=c, sticky='nsew', padx=4, pady=4)
+                # neither manager may resize a cell from the inside: a long
+                # reading has to shrink to fit its cell, not widen its column
                 f.grid_propagate(False)
+                f.pack_propagate(False)
                 self.frames[(r, c)] = f
                 # what it is, top left: the drive, or the filesystem's path
                 n = tk.Label(f, text='', font=('DejaVu Sans', 15), fg=MUTED,

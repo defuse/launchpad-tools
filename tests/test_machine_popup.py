@@ -135,15 +135,29 @@ def test_a_reading_is_never_set_larger_than_the_standard_size(grid):
         'and a short one is not shrunk for nothing'
 
 
-def test_a_reading_is_never_wider_than_its_cell(grid):
+def test_every_cell_is_the_same_width(grid):
+    """A long reading shrinks to fit its cell; it does not widen its column.
+    The board's pads are all one size and this is a picture of them."""
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    grid.root.update()
+    widths = {f.winfo_width() for f in grid.frames.values()}
+    # a pixel of slack: eight columns rarely divide a window evenly, and grid
+    # hands the remainder to the leftmost ones
+    assert max(widths) - min(widths) <= 1, f'columns came out at {sorted(widths)}'
+
+
+def test_a_reading_is_shrunk_until_it_fits_its_cell(grid):
+    """Or is at the smallest size there is: below that it stops being a
+    reading. This window is 1200 wide in the tests and 3840 on the desk."""
     say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
     import tkinter.font as tkfont
+    smallest = grid.mod.VALUE_SIZES[-1]
     for (r, c), v in grid.values.items():
         text = v.cget('text')
         if text:
             f = tkfont.Font(root=grid.root, font=v.cget('font'))
-            assert f.measure(text) <= grid.frames[(r, c)].winfo_width(), \
-                f'{text!r} overflows its cell'
+            assert (f.measure(text) <= grid.frames[(r, c)].winfo_width()
+                    or f.actual('size') == smallest), f'{text!r} overflows its cell'
 
 
 def test_the_blank_row_is_blank(grid):

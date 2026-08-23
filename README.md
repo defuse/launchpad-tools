@@ -371,7 +371,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 679 tests, about forty-five seconds
+tests/run-tests             # 682 tests, about forty-five seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

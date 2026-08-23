@@ -134,10 +134,12 @@ TICK = 0.05
 SPEC_TICK = 0.02
 
 OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
-# A done todo item is a lighter green than a claimed pomodoro: the two rows sit
+# A done todo item is a brighter green than a claimed pomodoro: the two rows sit
 # one above the other, and the same green in both reads as one block. Sent as
-# RGB, since the palette has no green that pale.
-TODO_DONE = (80, 127, 90)
+# RGB, since the palette has no green like it. Green at full with the other two
+# held well down -- (80, 127, 90) was so near grey that the pad read as white,
+# which is what an unstarted named slot looks like.
+TODO_DONE = (35, 127, 70)
 YELLOW, CYAN = 13, 33
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
@@ -169,7 +171,7 @@ MACHINE_POPUP = os.path.expanduser('~/.local/bin/machine-popup')
 POMO_POPUP = os.path.expanduser('~/.local/bin/pomo-popup')
 # What the pads are showing, in CSS, for the window that mirrors them
 PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
-           BLUE: '#5a7bff', TODO_DONE: '#a0feb4',
+           BLUE: '#5a7bff', TODO_DONE: '#46ff8d',
            # the bar's last hour: yellow at 23:00, orange at 23:30, red after.
            # Purple and pink are the week filling and full, which no window
            # shows today -- but a bar's colour missing from here comes out as
@@ -1616,12 +1618,15 @@ class Board:
         first = centred(len(snap.disks))
         temps = {n: (t, spins) for n, t, spins in snap.drives}
         for i, (disk, state) in enumerate(snap.disks):
-            add(DISK_ROW, first + i, disk, state,
+            # the path you would actually type: /proc/mdstat says sda, and
+            # every command you would run about it wants /dev/sda
+            add(DISK_ROW, first + i, f'/dev/{disk}', state,
                 {'ok': DISK_OK, 'sync': DISK_SYNC}.get(state, DISK_FAIL))
             t, spins = temps.get(disk, (None, False))
             # the drive by name, not just its kind: the column says which one
             # only if you can see the health row above it
-            add(DRIVE_TEMP_ROW, first + i, f'{disk} {"HDD" if spins else "SSD"}',
+            add(DRIVE_TEMP_ROW, first + i,
+                f'/dev/{disk} ({"HDD" if spins else "SSD"})',
                 '--' if t is None else f'{t:.0f}C',
                 self.temp_colour(t, DRIVE_LIMITS[spins]))
 
