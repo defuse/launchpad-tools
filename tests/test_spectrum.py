@@ -96,8 +96,11 @@ def test_a_tone_lights_the_band_it_belongs_to(spec, mod):
 
 
 def test_a_low_tone_lights_a_low_band(spec, mod):
+    """Band 0 or 1, not an exact column: at 23Hz per bin a 60Hz tone straddles
+    the boundary, and the tilt lifts the band above it by design."""
     levels, _ = feed(spec, 'x.monitor', tone(mod, 60), 1000.0)
-    assert levels.index(max(levels)) == 0
+    assert levels.index(max(levels)) <= 1
+    assert max(levels[4:]) < max(levels[:2])
 
 
 def test_silence_is_dark(spec, mod):

@@ -384,12 +384,17 @@ SPEC_ROWS = [1, 2, 3, 4, 5, 6, 7]          # filled from the bottom
 SPEC_HUES = (RED, ORANGE, YELLOW, GREEN, CYAN, SKY, BLUE, MAGENTA)
 SPEC_PEAK = WHITE                          # peak hold, falling back slowly
 SPEC_LO, SPEC_HI = 40, 12000               # Hz, log spaced across the columns
-SPEC_FLOOR, SPEC_CEIL = -52.0, -10.0       # dB at the bottom and top of a column
-# Music carries most of its energy low down -- measured here, the bass bands
-# run about 10dB above the treble on ordinary material -- so without a tilt the
-# right of the board barely moves. 3dB per band is roughly per octave, which is
-# what the columns are.
-SPEC_TILT = 3.0
+# Calibrated against Spotify at full volume: bands median about -22dB tilted
+# and peak around -8dB, so the row sits half height and tops out on transients
+# rather than pinning. Quieter listening drops it a couple of rows, which is
+# the point of a meter.
+SPEC_FLOOR, SPEC_CEIL = -46.0, -6.0        # dB at the bottom and top of a column
+# Music carries most of its energy low down -- measured on this system, the
+# bass bands run 1.9dB per band above the treble -- so without a tilt the right
+# of the board barely moves. Tilting by slightly less than the measured slope
+# evens the row out while leaving bass still visibly the loudest, which is what
+# it actually is.
+SPEC_TILT = 1.6
 SPEC_FALL = 0.6                            # peak hold decay, per second
 
 
