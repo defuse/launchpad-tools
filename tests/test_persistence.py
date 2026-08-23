@@ -86,11 +86,15 @@ def test_migration_flat_habits_key(state_file, clock):
 
 
 def test_unknown_row_keys_are_ignored(seed, mod):
-    seed(rows={'1': {'state': 'running', 'started': 5.0},
+    """Row 1 is a real example: it was a pomodoro row until the day bar took
+    it, so an older state file still has one saved there."""
+    live = mod.POMO_ROWS[0]
+    seed(rows={str(live): {'state': 'running', 'started': 5.0},
+               '1': {'state': 'running', 'started': 5.0},
                '99': {'state': 'running', 'started': 5.0}})
     b = new_board(mod, FakeOut())
-    assert b.rows[1]['state'] == 'running'
-    assert 99 not in b.rows
+    assert b.rows[live]['state'] == 'running'
+    assert 1 not in b.rows and 99 not in b.rows
 
 
 def test_bad_persisted_mode_falls_back(seed, mod):

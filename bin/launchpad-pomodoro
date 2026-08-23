@@ -10,11 +10,20 @@ Pomodoro board on a Novation Launchpad Mini MK3.
                 Holding fills the row leftward so you can see it coming, and
                 letting go early cancels -- a corner pad is too easy to brush
                 for a single press to be allowed to kill a running timer.
-  rows 7..3     five independent pomodoro timers, one per row.
+  row 7         DAY BAR. How much of today has begun, one pad per three
+                hours, deep blue and read-only -- the same bar the daily habit
+                tab carries, drawn by the same code.
+  rows 6..3     four independent pomodoro timers, one per row.
   row 2         free toggles, press cycles off -> red -> green -> off.
   row 1         break timer. The same state machine as a pomodoro row, but
                 8 x 1 min = 8 min, idle light blue instead of white, and it
                 fills blue instead of green.
+
+The habit tabs give up their top row to the same kind of bar, each for its own
+period: the daily tab shows the day, the weekly one shows the week, a pad per
+day. A cell lights as its slice STARTS, so a full bar means you are inside the
+last slice -- the daily bar goes red for its final three hours and blinks
+harder through the last one.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -48,10 +57,17 @@ A pomodoro row, left to right, is its own progress bar:
   is saved with the rest of the state, so a restart puts the pads back to
   meaning what they meant before it.
 
+  What each row means is declared once, in TAB_ROWS: drawing reads it and so
+  does press dispatch, so a row cannot come to mean one thing to the eye and
+  another to the finger. Rows owned by a read-only widget -- a bar, a meter --
+  have no gesture at all, by construction rather than by a guard somebody has
+  to remember to write.
+
 The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """
-import mido, time, sys, json, os, threading, subprocess, shutil, signal
+import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum
+from typing import Callable, NamedTuple
 
 # ---- hardware -------------------------------------------------------------
 SYSEX_PROGRAMMER = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01]
@@ -86,23 +102,6 @@ NET_IFACE = None                     # auto-detected: the default-route interfac
 # elapsed-time bar has taken over
 HAB_ROWS = [2, 3, 4, 5, 6, 7]
 
-# ---- elapsed-time bars ----------------------------------------------------
-# The top row of a habit tab shows how much of the period those habits are for
-# has BEGUN, one cell per slice. A cell lights as its slice starts, not when it
-# ends, so a full bar means "you are inside the last slice" -- lighting on the
-# way out would put the final cell on the stroke of midnight, where it would be
-# replaced by an empty bar in the same instant.
-PROG_ROW  = 1
-PROG_DAY  = BLUE                      # eight three-hour slices from midnight
-PROG_WEEK = PURPLE                    # one slice per day from Sunday midnight
-PROG_FULL = RED                       # bar full: the period is nearly over
-# The daily bar escalates through the last hour. Same duty-cycle trick as the
-# pomodoro blink -- chunks cut out of a lit pad rather than a 50% square wave,
-# which reads as urgency instead of an error. The weekly bar never flashes: it
-# fills for a whole day, and a day of blinking pads is just noise.
-PROG_FLASH = ((15 * 60, 0.15, 0.15),                # last 15 min: rapid
-              (30 * 60, 0.75, 0.15),                # last 30 min: twice as fast
-              (60 * 60, FLASH_ON, FLASH_OFF))       # last hour: pomodoro speed
 # No hold threshold for peeking: the window opens the instant a pad goes down
 # and closes on release, so a plain click just flashes it. Waiting to decide
 # whether a press was a "hold" cost 350ms of dead time before anything appeared.
@@ -115,80 +114,182 @@ POPUP = os.path.expanduser('~/.local/bin/habit-popup')
 def pad(lrow, lcol):
     return (8 - lrow) * 10 + (lcol + 1)
 
+CELLS      = 8
 FUNC_ROW   = 0
 RESET_COL  = 7                                # top-right pad
 RESET_HOLD = 2.0                              # seconds to hold before it fires
-POMO_ROWS  = [1, 2, 3, 4, 5]
-BREAK_ROW  = 7                                # same machine, shorter and blue
-TIMER_ROWS = POMO_ROWS + [BREAK_ROW]
+
+# note -> (row, col). A dict, so a pad that is not on the grid is a miss rather
+# than a 64-iteration search that returns None.
+RC = {pad(r, c): (r, c) for r in range(8) for c in range(8)}
+
+
+class Timer(NamedTuple):
+    """One timer row. A pomodoro and a break are the same state machine at
+    different lengths, so there is one implementation and two of these rather
+    than two implementations that can drift apart."""
+    step:  int                 # seconds per cell
+    idle:  int                 # colour of the leftmost pad when idle
+    fill:  int                 # colour it fills with
+    chime: str                 # played when the row elapses
+    warn:  tuple               # (seconds in, chime) one-shot warning, or None
+
+    @property
+    def length(self):
+        return self.step * CELLS
+
+
+# Four strikes for the break and three for a pomodoro, so you can tell which
+# one ended without looking. The warning is higher and quicker than either, so
+# it cannot be mistaken for a timer actually finishing.
+POMODORO = Timer(step=3 * 60, idle=WHITE, fill=GREEN, chime='finish.wav', warn=None)
+BREAK    = Timer(step=60, idle=BLUE, fill=BLUE, chime='break.wav',
+                 warn=(6 * 60, 'break-warn.wav'))
+
+BAR_ROW    = 1                                # the top row is an elapsed-time bar
+POMO_ROWS  = [2, 3, 4, 5]
 TOGGLE_ROWS= [6]
+BREAK_ROW  = 7
+TIMERS     = {**{r: POMODORO for r in POMO_ROWS}, BREAK_ROW: BREAK}
+TIMER_ROWS = list(TIMERS)
 # system monitor: memory across the bottom row, CPU columns in the rows above
 MEM_ROW    = 7
 CPU_ROWS   = [1, 2, 3, 4, 5, 6]           # drawn bottom-up
-CELLS      = 8
-SECS_PER_CELL = 3 * 60                        # 8 * 3 min = 24 min
-BREAK_SECS_PER_CELL = 60                      # 8 * 1 min = 8 min
-
-def row_style(r):
-    """(seconds per cell, idle colour, fill colour) for a timer row.
-
-    The break row runs the identical state machine as a pomodoro row -- only
-    its length and palette differ, so there is one implementation rather than
-    two that can drift apart."""
-    if r == BREAK_ROW:
-        return BREAK_SECS_PER_CELL, BLUE, BLUE
-    return SECS_PER_CELL, WHITE, GREEN
-
-def row_chime(r):
-    """Which chime a row plays when it elapses. Four strikes for the break and
-    three for a pomodoro, so you can tell which one ended without looking."""
-    return 'break.wav' if r == BREAK_ROW else 'finish.wav'
-
-BREAK_WARN_AT = 6 * 60                        # two minutes left of an 8 min break
-
-def row_warn(r):
-    """(seconds in, chime) for a one-shot warning part way through a row, or
-    None. Higher and quicker than the end chimes so it cannot be mistaken for
-    the timer actually finishing."""
-    if r == BREAK_ROW:
-        return BREAK_WARN_AT, 'break-warn.wav'
-    return None
+METER_ROWS = CPU_ROWS + [MEM_ROW]         # the network meter uses all seven
 STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
 SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
 PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
 
-def day_bar(now=None):
-    """(cells lit, seconds left) for the daily bar: eight 3 h slices.
+# ---- elapsed-time bars ----------------------------------------------------
+# The top row of a tab is not part of that tab: it is a bar showing how much of
+# a period has begun, one cell per slice. A cell lights as its slice STARTS,
+# not when it ends, so a full bar means "you are inside the last slice".
+# Lighting on the way out would put the final cell on the stroke of midnight,
+# where the reset replaces it with an empty bar in the same instant.
+BAR_FULL = RED                                     # full: nearly out of period
+# Escalation through the final hour, for the periods that flash. Same duty
+# cycle trick as the pomodoro blink -- chunks cut out of a lit pad rather than
+# a 50% square wave, which reads as urgency instead of an error.
+BAR_FLASH = ((15 * 60, 0.15, 0.15),                # last 15 min: rapid
+             (30 * 60, 0.75, 0.15),                # last 30 min: twice as fast
+             (60 * 60, FLASH_ON, FLASH_OFF))       # last hour: pomodoro cadence
 
-    The day is the local one, midnight to midnight, so the bar follows the
-    clock on the wall through daylight saving rather than counting 86400s
-    from some past midnight.
+
+def _into_day(t):
+    """Seconds since local midnight."""
+    return t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+
+
+def _into_week(t):
+    """Seconds since midnight on Sunday. tm_wday counts from Monday."""
+    return ((t.tm_wday + 1) % 7) * 86400 + _into_day(t)
+
+
+class Period(NamedTuple):
+    """A repeating stretch of time, drawn as one row of pads.
+
+    Measured against the local wall clock, so a bar follows the clock on the
+    wall through daylight saving rather than counting fixed seconds from some
+    past midnight.
     """
-    t = time.localtime(now if now is not None else time.time())
-    secs = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
-    return min(CELLS, secs // (24 * 3600 // CELLS) + 1), 24 * 3600 - secs
+    name:    str
+    colour:  int
+    slices:  int                       # slices in the period, at most CELLS
+    step:    int                       # seconds per slice
+    into:    Callable                  # seconds into the period, from a struct_time
+    flashes: bool                      # escalate through the final hour?
+
+    @property
+    def length(self):
+        return self.slices * self.step
+
+    def bar(self, now=None):
+        """(cells lit, seconds left).
+
+        Spare cells -- a week has seven slices but a row has eight pads -- light
+        with the last real slice, so the bar reads as full on the last day
+        instead of holding a gap that can never close.
+        """
+        into = self.into(time.localtime(now if now is not None else time.time()))
+        lit = int(into // self.step) + 1
+        return (CELLS if lit >= self.slices else lit), self.length - into
+
+    def cadence(self, left):
+        """(on, off) seconds for the blink with `left` seconds to run, or None
+        for no blink at all."""
+        if not self.flashes:
+            return None
+        for limit, on, off in BAR_FLASH:
+            if left <= limit:
+                return on, off
+        return None
 
 
-def week_bar(now=None):
-    """(cells lit, seconds left) for the weekly bar: one slice per day.
+DAY  = Period('day', BLUE, slices=CELLS, step=3 * 3600, into=_into_day, flashes=True)
+# The weekly bar does not flash: it is full for a whole day, and a day of
+# blinking pads is noise rather than urgency.
+WEEK = Period('week', PURPLE, slices=7, step=86400, into=_into_week, flashes=False)
 
-    Weeks start Sunday at midnight. Seven days share eight cells, so the spare
-    last one lights with the seventh -- otherwise Saturday would sit at seven
-    of eight and the bar could never read as full.
+# Which bar a tab carries on BAR_ROW. The pomodoro tab and the daily habit tab
+# show the same day, drawn by the same code from the same Period.
+BARS = {M_POMO: DAY, M_HAB: DAY, M_HAB2: WEEK}
+
+
+class Widget(enum.Enum):
+    """What a row of pads means on a given tab.
+
+    Every tab drives the same 64 pads, so a row means nothing on its own -- it
+    means whatever the tab showing it says it means. Naming those meanings
+    keeps rendering and input reading from the same declaration below.
     """
-    t = time.localtime(now if now is not None else time.time())
-    day = (t.tm_wday + 1) % 7                   # tm_wday counts from Monday
-    secs = day * 86400 + t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
-    lit = day + 1
-    return (CELLS if lit >= CELLS - 1 else lit), 7 * 86400 - secs
+    BAR    = 'bar'                     # read-only elapsed time
+    TIMER  = 'timer'
+    TOGGLE = 'toggle'
+    HABIT  = 'habit'
+    CPU    = 'cpu'                     # read-only meters
+    MEM    = 'mem'
+    NET    = 'net'
 
 
-def prog_flash(left):
-    """Blink cadence for a full bar with `left` seconds to run, or None."""
-    for limit, on, off in PROG_FLASH:
-        if left <= limit:
-            return on, off
+# The layout, stated once. press() dispatches on it and render() draws it, so a
+# row cannot come to mean one thing to the eye and another to the finger.
+TAB_ROWS = {
+    M_POMO: {Widget.TIMER: TIMER_ROWS, Widget.TOGGLE: TOGGLE_ROWS},
+    M_HAB:  {Widget.HABIT: HAB_ROWS},
+    M_HAB2: {Widget.HABIT: HAB_ROWS},
+    M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
+    M_NET:  {Widget.NET: METER_ROWS},
+}
+for _m in BARS:                        # a tab with a bar gives up that row
+    TAB_ROWS[_m][Widget.BAR] = [BAR_ROW]
+
+
+def widget_at(mode, row):
+    """What `row` means on `mode`, or None if that tab leaves it dark."""
+    for widget, rows in TAB_ROWS.get(mode, {}).items():
+        if row in rows:
+            return widget
     return None
+
+
+def _check_layout():
+    """Two widgets on one tab must never claim the same row.
+
+    Sharing a row is how a press comes to mean two things at once, which is the
+    bug this board has had more than any other -- worth a startup failure
+    rather than a silent misfire hours later.
+    """
+    for mode, widgets in TAB_ROWS.items():
+        claimed = {}
+        for widget, rows in widgets.items():
+            for r in rows:
+                if r in claimed:
+                    raise RuntimeError(f'tab {mode}: row {r} is both '
+                                       f'{claimed[r].value} and {widget.value}')
+                claimed[r] = widget
+
+
+_check_layout()
 
 
 def ding(name):
@@ -420,8 +521,27 @@ class Board:
         return t0 if pressed_in == (self.mode if mode is None else mode) else None
 
     def render(self):
-        # mode row: one pad per mode (white = selected), red reset on the right.
-        # While the reset pad is held, fill leftward as a 2 s progress bar.
+        """One frame. Draws only -- tick() owns every state transition."""
+        self.render_tabs()
+        bar = BARS.get(self.mode)
+        if bar:
+            self.render_bar(bar)
+        if self.mode == M_SYS:
+            return self.render_sys()
+        if self.mode == M_NET:
+            return self.render_net()
+        if self.mode in HAB_MODES:
+            return self.render_habits()
+        self.render_timers()
+        self.render_toggles()
+
+    def render_tabs(self):
+        """Mode row: one pad per mode (sky = selected), red reset on the right.
+
+        While the reset pad is held the row fills leftward as a 2 s progress
+        bar. That fill is feedback only -- reset fires on release, in
+        release(), so one pad can serve both a tap and a hold.
+        """
         held_for = 0.0
         t0 = self.held_since(pad(FUNC_ROW, RESET_COL))
         if t0: held_for = time.time() - t0
@@ -432,27 +552,28 @@ class Board:
             elif c in TABS and not lit:            col = TAB_SELECTED if c == self.mode else WHITE
             else:                                  col = OFF
             self.set(pad(FUNC_ROW, c), col)
-        # the fill is feedback only -- reset itself fires on release, in
-        # release(), so one pad can serve both a tap and a hold
 
-        if self.mode == M_SYS:
-            self.render_sys()
-            return
-        if self.mode == M_NET:
-            self.render_net()
-            return
-        if self.mode in HAB_MODES:
-            self.render_habits()
-            self.render_progress()
-            return
+    def render_bar(self, period):
+        """BAR_ROW: how much of `period` has begun. See Period."""
+        lit, left = period.bar()
+        full = lit >= CELLS
+        colour = BAR_FULL if full else period.colour
+        beat = period.cadence(left) if full else None
+        for c in range(CELLS):
+            p = pad(BAR_ROW, c)
+            if c >= lit:   self.set(p, OFF)
+            elif beat:     self.flash(p, colour, *beat)
+            else:          self.set(p, colour)
+
+    def render_timers(self):
+        """Every timer row on the pomodoro tab, each its own progress bar."""
         now = time.time()
         for r in TIMER_ROWS:
             st = self.rows[r]
             s = st['state']
-            secs, idle_col, fill_col = row_style(r)
+            t = TIMERS[r]
 
             # holding the leftmost pad abandons the row; show it filling
-            # (only reachable in pomodoro mode -- render_sys returns earlier)
             t0 = self.held_since(pad(r, 0), M_POMO)
             if t0 is not None:
                 frac = (now - t0) / RESET_HOLD
@@ -461,33 +582,34 @@ class Board:
                     self.held.pop(pad(r, 0), None)
                     self.save()
                     for c in range(CELLS):
-                        self.set(pad(r, c), idle_col if c == 0 else OFF)
+                        self.set(pad(r, c), t.idle if c == 0 else OFF)
                     continue
                 if frac > 0.08:                # ignore an ordinary tap
                     n = int(frac * CELLS) + 1
                     for c in range(CELLS):
                         self.set(pad(r, c), RED if c < n else OFF)
                     continue
-            # render only draws. tick() owns every state transition and always
-            # runs first, so the elapsed handover (and its chime) lives there --
-            # doing it in both meant two places could fire the same transition.
+            # tick() always runs first and owns the elapsed handover (and its
+            # chime) -- doing it in both meant two places could fire the same
+            # transition.
             if s == RUNNING:
-                done = min(int((now - st['started']) // secs), CELLS - 1)
+                done = min(int((now - st['started']) // t.step), CELLS - 1)
                 for c in range(CELLS):
                     p = pad(r, c)
-                    if c < done:    self.set(p, fill_col)
-                    elif c == done: self.flash(p, fill_col)
+                    if c < done:    self.set(p, t.fill)
+                    elif c == done: self.flash(p, t.fill)
                     else:           self.set(p, OFF)
             elif s == ELAPSED:
                 for c in range(CELLS):
-                    self.set(pad(r, c), fill_col if c == CELLS - 1 else RED)
+                    self.set(pad(r, c), t.fill if c == CELLS - 1 else RED)
             elif s == CLAIMED:
                 for c in range(CELLS):
-                    self.set(pad(r, c), fill_col)
+                    self.set(pad(r, c), t.fill)
             else:                                  # IDLE, and anything unknown
                 for c in range(CELLS):
-                    self.set(pad(r, c), idle_col if c == 0 else OFF)
+                    self.set(pad(r, c), t.idle if c == 0 else OFF)
 
+    def render_toggles(self):
         for r in TOGGLE_ROWS:
             for c in range(CELLS):
                 v = self.toggles.get((r, c), 0)
@@ -506,7 +628,7 @@ class Board:
             for note in list(self.held):
                 t0 = self.held_since(note)
                 got = self.rc(note)
-                if t0 is None or not got or got[0] not in HAB_ROWS:
+                if t0 is None or not got or widget_at(self.mode, got[0]) is not Widget.HABIT:
                     continue
                 due = int((now - t0) / HOLD_CYCLE)      # one cycle per second held
                 done = self._hold_count.get(note, 0)
@@ -516,21 +638,21 @@ class Board:
                         self.cycle_state(*got)
         for r in TIMER_ROWS:
             st = self.rows[r]
-            secs, _, _ = row_style(r)
+            t = TIMERS[r]
             if st['state'] != RUNNING:
                 continue
             elapsed = now - st['started']
-            warn = row_warn(r)
+            warn = t.warn
             if warn and not st.get('warned') and elapsed >= warn[0]:
                 # flag persisted with the row, so a restart mid-break does not
                 # replay a warning you have already heard
                 st['warned'] = True
                 self.save()
                 ding(warn[1])
-            if elapsed >= CELLS * secs:
+            if elapsed >= t.length:
                 st['state'] = ELAPSED
                 self.save()
-                ding(row_chime(r))
+                ding(t.chime)
 
     # ---- mode 2: system monitor -----------------------------------------
     def cpu_usage(self):
@@ -647,11 +769,7 @@ class Board:
 
     def rc(self, note):
         """note -> (logical row, col), or None if it isn't a grid pad."""
-        for lr in range(8):
-            for lc in range(8):
-                if pad(lr, lc) == note:
-                    return lr, lc
-        return None
+        return RC.get(note)
 
     def release(self, note):
         got = self.held.pop(note, None)
@@ -694,16 +812,22 @@ class Board:
                     else:
                         self._popup_cmd('hide')   # left the habit tabs
                         self._editing = None
-        elif self.mode in HAB_MODES and lr in HAB_ROWS:
+            return
+        widget = widget_at(self.mode, lr)
+        if widget is Widget.HABIT:
             # Select on the way DOWN, not on release: holding a pad that isn't
             # the selected one cycles it immediately, so waiting for release
             # meant watching a cell change while a different one stayed lit.
             # A hold is then just a select that also cycles.
             self.select_habit(lr, lc)
-        elif self.mode == M_POMO and lr in TIMER_ROWS: self.pomo_press(lr, lc)
-        elif self.mode == M_POMO and lr in TOGGLE_ROWS:
+        elif widget is Widget.TIMER:
+            self.pomo_press(lr, lc)
+        elif widget is Widget.TOGGLE:
             self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
             self.save()
+        # The read-only widgets -- the bar and the meters -- and any row a tab
+        # leaves dark have no gesture at all, by construction rather than by a
+        # guard that someone has to remember to write.
 
     def reset(self):
         """Reset only what the CURRENT mode owns.
@@ -775,22 +899,6 @@ class Board:
                 else:
                     col = self.HAB_STATE_COLOUR.get(h.get('state', 0), own)
                 self.set(pad(r, c), col)
-
-    def render_progress(self):
-        """Top row of a habit tab: how much of the day or week has begun."""
-        daily = self.mode == M_HAB
-        lit, left = day_bar() if daily else week_bar()
-        full = lit >= CELLS
-        col = PROG_FULL if full else (PROG_DAY if daily else PROG_WEEK)
-        beat = prog_flash(left) if daily and full else None
-        for c in range(CELLS):
-            p = pad(PROG_ROW, c)
-            if c >= lit:
-                self.set(p, OFF)
-            elif beat:
-                self.flash(p, col, *beat)
-            else:
-                self.set(p, col)
 
     def select_habit(self, r, c):
         """Make (r,c) the selected cell, opening the window if it is closed."""

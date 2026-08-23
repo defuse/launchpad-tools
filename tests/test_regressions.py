@@ -18,20 +18,19 @@ def col0(mod, row):
 def test_habit_column_and_pomodoro_column_are_the_same_pads(mod):
     """The premise of the bug: they collide, by design.
 
-    Row 1 changed sides when the elapsed-time bar took the top habit row. It is
-    still a shared pad -- a pomodoro start on one tab, a bar cell on the other
-    -- just no longer shared with a habit.
+    Both tabs gave their top row to the elapsed-time bar, so the rows that are
+    left still overlap exactly as before.
     """
     shared = {mod.pad(r, 0) for r in mod.POMO_ROWS}
     habit  = {mod.pad(r, 0) for r in mod.HAB_ROWS}
-    assert mod.PROG_ROW in mod.POMO_ROWS
-    assert shared & habit == shared - {mod.pad(mod.PROG_ROW, 0)}
+    assert shared <= habit
+    assert mod.BAR_ROW not in mod.POMO_ROWS + mod.HAB_ROWS
 
 
 def test_holding_a_habit_then_tapping_the_pomodoro_tab_keeps_the_timers(mod, seed, clock):
     """THE PRIMARY BUG.
 
-    The observed state file had all five rows {state: idle, started: 0.0} after
+    The observed state file had every pomodoro row {state: idle, started: 0.0} after
     a restart that chimed -- so the rows had loaded as running, elapsed
     correctly, and were then wiped. Nobody touched the reset pad.
 
@@ -47,7 +46,7 @@ def test_holding_a_habit_then_tapping_the_pomodoro_tab_keeps_the_timers(mod, see
     b = new_board(mod, FakeOut())
 
     b.tick()                                          # the chime the user hears
-    assert [d[1] for d in mod.dings] == ['finish.wav'] * 5
+    assert [d[1] for d in mod.dings] == ['finish.wav'] * len(mod.POMO_ROWS)
     assert all(b.rows[r]['state'] == mod.ELAPSED for r in mod.POMO_ROWS)
 
     for r in mod.POMO_ROWS:                           # walk the routine column
@@ -154,12 +153,13 @@ def test_a_frame_that_throws_does_not_stop_the_clock(mod, clock, monkeypatch):
     """main() catches per-frame errors; make sure tick() is what advances state
     so a broken renderer cannot stall a running pomodoro."""
     b = new_board(mod, FakeOut())
-    b.rows[1] = {'state': mod.RUNNING, 'started': clock.time() - 99_999}
+    b.rows[mod.POMO_ROWS[0]] = {'state': mod.RUNNING,
+                                'started': clock.time() - 99_999}
     monkeypatch.setattr(b, 'render', lambda: (_ for _ in ()).throw(RuntimeError('boom')))
     b.tick()
     with pytest.raises(RuntimeError):
         b.render()
-    assert b.rows[1]['state'] == mod.ELAPSED
+    assert b.rows[mod.POMO_ROWS[0]]['state'] == mod.ELAPSED
 
 
 def test_hold_counter_does_not_leak_across_tabs(mod, clock):

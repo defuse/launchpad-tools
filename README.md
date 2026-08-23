@@ -15,8 +15,9 @@ them; everything else keeps running in the background.
   ┌──────┬───────┬───────┬───┬───┬──────┬──────┬───────┐
 8 │ pomo │ daily │ weekly│   │   │ cpu  │ net  │ reset │   tabs
   ├──────┴───────┴───────┴───┴───┴──────┴──────┴───────┤
-7 │                                                    │
-6 │            five pomodoro timers                    │
+7 │            day bar: 8 x 3 h, deep blue             │
+  ├────────────────────────────────────────────────────┤
+6 │            four pomodoro timers                    │
 5 │            8 pads x 3 min = 24 min                 │
 4 │                                                    │
 3 │                                                    │
@@ -39,7 +40,7 @@ way to stop one part way through, deliberately awkward.
 
 The break row on the bottom is the same machine with a different length and
 palette: eight minutes, blue instead of green, with a two-strike warning at six
-minutes.
+minutes. The top row is the day bar, described below.
 
 Chimes are synthesised (see `share/make-sounds`) and distinguishable by count,
 so you can tell what happened without looking:
@@ -57,23 +58,30 @@ Two independent grids, daily and weekly. Each pad is one habit, showing its own
 colour when unstarted, flashing red while in progress, solid green when done.
 A pad with no name is off and does nothing.
 
-The top row of each grid is not a habit but a bar showing how much of the
-period those habits are for has begun — eight three-hour slices from midnight
-in deep blue for the daily tab, one slice per day from Sunday in deep purple
-for the weekly one. A cell lights as its slice starts rather than when it ends,
-so a full bar means you are inside the last one; lighting on the way out would
-put the final cell on the stroke of midnight, replaced by an empty bar in the
-same instant. Seven days share eight cells, so the spare one lights with the
-seventh. A full bar turns red, and the daily one blinks through the last hour:
-pomodoro cadence from 23:00, twice that from 23:30, rapid from 23:45. The
-weekly bar never blinks — it is full for a whole day.
-
 **Hold** a pad to cycle its state, once per second held. **Press** it to open a
 window on screen showing the whole grid, where you can rename habits, pick
 colours, drag them around to rearrange, and double-click to cycle. Everything
 applies immediately; Esc closes the window, and a quick tap of the reset pad
 does too. Holding reset for two seconds clears the current tab back to
 unstarted.
+
+## Bars
+
+The top row of the pomodoro tab and of both habit tabs is not part of the tab:
+it shows how much of a period has begun. The pomodoro and daily tabs share the
+same day — eight three-hour slices from midnight, deep blue — and the weekly
+tab shows its week, one slice per day from Sunday, deep purple.
+
+A cell lights as its slice *starts* rather than when it ends, so a full bar
+means you are inside the last one. Lighting on the way out would put the final
+cell on the stroke of midnight, replaced by an empty bar in the same instant.
+Seven days share eight cells, so the spare one lights with the seventh.
+
+A full bar turns red. The daily one then blinks through the last hour —
+pomodoro cadence from 23:00, twice that from 23:30, rapid from 23:45 — by
+cutting chunks out of a lit pad rather than blinking on and off, which reads as
+urgency instead of an error. The weekly bar never blinks: it is full for a
+whole day.
 
 ## Meters
 
@@ -114,7 +122,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 225 tests, about six seconds
+tests/run-tests             # 248 tests, about six seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
