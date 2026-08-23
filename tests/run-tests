@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Run the launchpad-pomodoro test suite.
+#
+#   tests/run-tests            everything
+#   tests/run-tests -k reset   pytest args pass through
+#
+# Safe against a live session:
+#   * the real state file is never opened -- every test gets a tmp_path copy
+#   * mido, the sound player and the popup subprocess are all stubbed
+#   * the window tests get a PRIVATE Xvfb, never the desktop on :0
+#   * launchpad-pomodoro.service is never touched
+set -uo pipefail
+cd "$(dirname "$(readlink -f "$0")")" || exit 1
+
+XVFB_PID=""
+cleanup() { [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null; }
+trap cleanup EXIT
+
+# -displayfd lets the server pick a free number and tell us which -- scanning
+# for an unused socket path picks numbers that are stale but still taken.
+DISPLAY_TO_USE=""
+if command -v Xvfb >/dev/null 2>&1; then
+    FD_FILE=$(mktemp)
+    Xvfb -displayfd 3 -screen 0 1400x900x24 -nolisten tcp 3>"$FD_FILE" >/dev/null 2>&1 &
+    XVFB_PID=$!
+    for _ in $(seq 1 60); do
+        n=$(tr -d '[:space:]' < "$FD_FILE")
+        [ -n "$n" ] && break
+        kill -0 "$XVFB_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    rm -f "$FD_FILE"
+    if [ -n "${n:-}" ] && [ "$n" != "0" ] && kill -0 "$XVFB_PID" 2>/dev/null; then
+        DISPLAY_TO_USE=":$n"
+    else
+        cleanup; XVFB_PID=""
+    fi
+fi
+
+if [ -n "$DISPLAY_TO_USE" ]; then
+    echo "window tests on a private $DISPLAY_TO_USE"
+    export DISPLAY="$DISPLAY_TO_USE"
+else
+    echo "no Xvfb - window tests will skip"
+    unset DISPLAY
+fi
+unset XAUTHORITY
+
+# not exec: that would replace the shell and the EXIT trap would never run,
+# leaving the Xvfb server behind after every run
+python3 -m pytest "$@"
+status=$?
+cleanup; XVFB_PID=""
+exit $status

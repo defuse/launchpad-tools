@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Regenerate the chimes into share/sounds/.
+
+Needs numpy. The committed wavs were made by this script, so you only need to
+run it if you want to change how they sound.
+
+They are struck-bowl sounds: a fundamental plus three inharmonic partials at
+bell ratios, higher partials decaying faster, and a slightly detuned twin of
+each so the tone beats gently instead of sitting still. Nothing is sampled.
+
+The four are meant to be told apart by ear alone, without looking at the board:
+
+    start        one strike               a timer began
+    break-warn   two fast, an octave up    two minutes of break left
+    finish       three strikes             a pomodoro ended
+    break        four strikes              a break ended
+"""
+import numpy as np, wave, os, sys
+
+SR = 48000
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sounds')
+PARTIALS = [(1.00, 1.00, 1.0), (2.76, 0.55, 1.7), (5.40, 0.28, 2.6), (8.93, 0.12, 3.6)]
+
+
+def strike(f0, dur, decay, beat=0.7):
+    n = int(SR * dur); t = np.arange(n) / SR; y = np.zeros(n)
+    for ratio, amp, dfac in PARTIALS:
+        f = f0 * ratio
+        y += amp * np.exp(-t * decay * dfac) * (
+            np.sin(2 * np.pi * f * t) + 0.6 * np.sin(2 * np.pi * (f + beat) * t))
+    atk = int(SR * 0.004)                      # short fade-in, else it clicks
+    y[:atk] *= np.linspace(0, 1, atk)
+    return y
+
+
+def chime(path, f0, n, gap, tail, decay, peak_db=-14.0, beat=0.7):
+    one = strike(f0, tail, decay, beat)
+    total = int(SR * (gap * (n - 1) + tail))
+    y = np.zeros(total)
+    for i in range(n):                          # later strikes a touch softer
+        o = int(SR * gap * i)
+        seg = one[:total - o]
+        y[o:o + len(seg)] += seg * (0.92 ** i)
+    fade = int(SR * 0.05)
+    y[-fade:] *= np.linspace(1, 0, fade)
+    y = y / np.abs(y).max() * 10 ** (peak_db / 20)
+    frames = (np.column_stack([y, y]) * 32767).astype('<i2').tobytes()
+    w = wave.open(path, 'wb')
+    w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
+    w.writeframes(frames); w.close()
+    return len(y) / SR
+
+
+SOUNDS = {
+    #                  f0     n  gap  tail  decay  peak
+    'start.wav':      (660.0, 1, 1.0, 3.5,  1.50, -14.0),
+    'finish.wav':     (440.0, 3, 1.0, 6.0,  0.85, -14.0),
+    'break.wav':      (440.0, 4, 1.0, 6.0,  0.85, -14.0),
+    # higher, faster and quieter: a nudge, not an announcement
+    'break-warn.wav': (880.0, 2, 0.28, 1.6, 3.20, -16.0),
+}
+
+if __name__ == '__main__':
+    os.makedirs(OUT, exist_ok=True)
+    for name, (f0, n, gap, tail, decay, peak) in SOUNDS.items():
+        beat = 0.9 if name == 'break-warn.wav' else 0.7
+        secs = chime(os.path.join(OUT, name), f0, n, gap, tail, decay, peak, beat)
+        print(f'  {name:16} {n} strike(s) at {f0:.0f} Hz   {secs:.1f}s')

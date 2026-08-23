@@ -1,0 +1,18 @@
+[Unit]
+Description=Pomodoro board on the Launchpad Mini MK3
+# Needs sound for the chimes; the Launchpad itself is plain USB MIDI.
+After=pipewire-pulse.service
+Wants=pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/launchpad-pomodoro
+# The Launchpad may not be plugged in, or may be unplugged mid-session --
+# the program exits, systemd waits and tries again rather than giving up.
+Restart=always
+RestartSec=10
+# Timer state is kept in ~/.local/share/launchpad-pomodoro.json, so a restart
+# resumes a running pomodoro from its real start time rather than losing it.
+
+[Install]
+WantedBy=default.target
