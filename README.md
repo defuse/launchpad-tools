@@ -105,7 +105,8 @@ its length.
 new tab's window opens in its place — or nothing does, on a tab that has none.
 
 The todo list is edited here — type a name, click a slot to cycle its state,
-drag a slot to move it. The name boxes wrap like a text editor and every one of
+drag a slot by its handle to move it (dragging inside the text box selects
+text, and moves nothing). The name boxes wrap like a text editor and every one of
 them is as tall as the longest item needs, so nothing scrolls and nothing is
 hidden. A drag is a *move*, not a swap: everything between the slot
 and where it lands shifts by one, in whichever direction that turns out to be,
@@ -342,7 +343,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 487 tests, about fifteen seconds
+tests/run-tests             # 491 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

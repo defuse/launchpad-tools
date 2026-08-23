@@ -180,3 +180,46 @@ def test_a_window_is_placed_when_it_is_shown(win):
     win.handle('show')
     win.root.update()
     assert seen, 'show asked where to put itself'
+
+
+def test_the_text_box_takes_no_gesture(win):
+    """Dragging inside it is selecting text. It used to move the item as well,
+    which loses the selection and the order in one motion."""
+    load(win, rows=ROWS_ONE)
+    for seq in ('<Button-1>', '<B1-Motion>', '<ButtonRelease-1>'):
+        assert not win.entries[0].bind(seq), f'{seq} is the text box\'s own'
+
+
+def test_selecting_text_does_not_reorder_the_list(win, capsys):
+    """The gesture a hand makes to select a long name is exactly a drag."""
+    todo = load(win, rows=ROWS_ONE)
+    capsys.readouterr()
+    box = win.entries[1]
+    box.event_generate('<Button-1>', x=4, y=4)
+    for x in (20, 60, 120):
+        box.event_generate('<B1-Motion>', x=x, y=4)
+    box.event_generate('<ButtonRelease-1>', x=120, y=4)
+    win.root.update()
+    assert 'move' not in capsys.readouterr().out
+    assert [t['name'] for t in win.todo] == [t['name'] for t in todo]
+
+
+def test_the_handle_still_drags(win, capsys):
+    load(win, rows=ROWS_ONE)
+    ev = types.SimpleNamespace(x_root=500, y_root=400, widget=win.slots[1])
+    win.grab(1, ev)
+    win.drag(types.SimpleNamespace(x_root=600, y_root=400), 1)
+    assert win.dragged
+
+
+def test_the_row_name_is_not_clipped(win):
+    """width=8 fitted 'timer 1' and cut the length off the front of it."""
+    rows = [{'row': 2, 'name': 'timer 1 (24 min)', 'state': 'idle',
+             'cells': ['#191920'] * 8},
+            {'row': 7, 'name': 'break (8 min)', 'state': 'idle',
+             'cells': ['#191920'] * 8}]
+    load(win, rows=rows)
+    label = win.row_names[2]
+    import tkinter.font as tkfont
+    wide = tkfont.Font(root=win.root, font=label.cget('font')).measure(label.cget('text'))
+    assert label.winfo_reqwidth() >= wide

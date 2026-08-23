@@ -90,7 +90,6 @@ class Window:
         self.drag_from = None
         self.dragged = False
         self.grabbed_at = (0, 0)
-        self.on_entry = False
         self.ghost = None
         self._painting = False
         self._built = False
@@ -158,7 +157,9 @@ class Window:
         line = 0
         for info in self.rows:
             self.outer.grid_rowconfigure(line, minsize=ROW_H)
-            name = tk.Label(self.outer, text=info.get('name', ''), width=8,
+            # no fixed width: the column is as wide as the longest name, so
+            # 'timer 1 (24 min)' is not clipped at its left edge
+            name = tk.Label(self.outer, text=info.get('name', ''),
                             font=('DejaVu Sans', 15), fg=MUTED, bg=BG, anchor='e')
             name.grid(row=line, column=0, sticky='e', padx=(0, 14))
             self.row_names[info['row']] = name
@@ -191,7 +192,7 @@ class Window:
         self.outer.grid_rowconfigure(line, minsize=24)
         line += 1
         self.outer.grid_rowconfigure(line, minsize=TODO_H)
-        tk.Label(self.outer, text='todo', width=8, font=('DejaVu Sans', 15),
+        tk.Label(self.outer, text='todo', font=('DejaVu Sans', 15),
                  fg=MUTED, bg=BG, anchor='e').grid(row=line, column=0,
                                                    sticky='e', padx=(0, 14))
         for c in range(COLS):
@@ -217,10 +218,11 @@ class Window:
             # a name is one line of text; the box is multiline so it can wrap,
             # not so it can hold paragraphs, and the protocol is line based
             e.bind('<Return>', lambda ev: 'break')
-            # The frame and the handle are the pad; the entry is the text box.
-            # Clicking into the text to type is not a press of anything, which
-            # is why the entry only takes the drag bindings and never the tap.
-            for w in (f, handle, e):  # noqa: E501 -- see grab() for which is which
+            # The frame and the handle are the pad; the entry is the text box
+            # and takes no gesture at all. Dragging inside it is selecting
+            # text, and a drag that started there used to move the item
+            # instead, which loses both the selection and the order.
+            for w in (f, handle):
                 w.bind('<Button-1>', lambda ev, col=c: self.grab(col, ev), add='+')
                 w.bind('<B1-Motion>', lambda ev, col=c: self.drag(ev, col), add='+')
                 w.bind('<ButtonRelease-1>', lambda ev, col=c: self.drop(ev), add='+')
@@ -302,12 +304,11 @@ class Window:
     # ---- drag to move, tap to press --------------------------------------
     def grab(self, col, ev):
         """Start of a gesture on a slot. Which gesture it turns out to be is
-        decided on release: no real movement and not in the text box makes it a
-        tap on the pad, movement makes it a drag."""
+        decided on release: no real movement makes it a tap on the pad,
+        movement makes it a drag. Gestures inside the text box never get here."""
         self.drag_from = col
         self.dragged = False
         self.grabbed_at = (ev.x_root, ev.y_root)
-        self.on_entry = ev.widget is self.entries.get(col)
 
     def drag(self, ev, col):
         if self.drag_from is None:
@@ -338,11 +339,9 @@ class Window:
         if src is None:
             return
         if not dragged:
-            # a tap: the same thing pressing the pad does, unless it was a
-            # click into the text box, which is just putting a cursor there
-            if not self.on_entry:
-                say(f'press\t{TODO_ROW}\t{src}')
-                say(f'release\t{TODO_ROW}\t{src}')
+            # a tap: the same thing pressing the pad does
+            say(f'press\t{TODO_ROW}\t{src}')
+            say(f'release\t{TODO_ROW}\t{src}')
             return
         dst = self.slot_under(ev.x_root, ev.y_root)
         if dst is None or dst == src:
