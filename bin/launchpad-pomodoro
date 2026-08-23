@@ -1339,6 +1339,10 @@ class Board:
                     old = self.habit(r, c, mode)
                     self.set_habit(r, c, {'name': name, 'colour': colour,
                                           'state': old.get('state', 0) if name else 0}, mode)
+                    continue
+                if len(f) == 5 and f[0] == 'swap':
+                    self.swap_habits((int(f[1]), int(f[2])),
+                                     (int(f[3]), int(f[4])), mode)
         except Exception as e:
             print(f"popup reader stopped: {e!r}", flush=True)
 
@@ -2317,6 +2321,19 @@ class Board:
         self._popup_send_table()
         self._popup_cmd('edit' if r is None else f'edit\t{r}\t{c}')
         self._editing = None if r is None else (r, c)
+
+    def swap_habits(self, a, b, mode=None):
+        """Exchange two cells whole: name, colour and state together.
+
+        A drag moves the habit, not its name. This used to go out as two
+        renames, and a rename deliberately leaves the state where it is -- so
+        a habit dragged while in progress arrived unstarted and the cell it
+        came from went on flashing for it.
+        """
+        ha = dict(self.habit(a[0], a[1], mode))
+        hb = dict(self.habit(b[0], b[1], mode))
+        self.set_habit(a[0], a[1], hb, mode)
+        self.set_habit(b[0], b[1], ha, mode)
 
     def cycle_state(self, r, c, mode=None):
         h = dict(self.habit(r, c, mode))

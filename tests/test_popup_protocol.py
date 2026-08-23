@@ -113,6 +113,72 @@ def test_garbage_lines_do_not_kill_the_reader(hb, capsys):
     assert 'popup reader stopped' in capsys.readouterr().out
 
 
+# ---- rearranging: the whole habit moves, or it is not a move --------------
+
+def records(board, mode='1'):
+    return sorted((h['name'], h['colour'], h.get('state', 0))
+                  for h in board.habit_sets[mode].values())
+
+
+def test_a_swap_carries_the_state_with_the_habit(hb, mod):
+    """The bug as reported: 'call it' was flashing red, and after a drag the
+    flashing stayed on the cell it came from."""
+    hb.habit_sets['1']['2,0'] = {'name': 'call it', 'colour': 37, 'state': 1}
+    hb.habit_sets['1']['3,1'] = {'name': 'shower', 'colour': 13, 'state': 2}
+    feed(hb, ['swap\t2\t0\t3\t1'])
+    assert hb.habit(3, 1) == {'name': 'call it', 'colour': 37, 'state': 1}
+    assert hb.habit(2, 0) == {'name': 'shower', 'colour': 13, 'state': 2}
+
+
+def test_the_pads_follow_the_swap(hb, mod, clock):
+    """The symptom was on the board, not in the window: the cell it came from
+    kept flashing for a habit that had moved."""
+    hb.habit_sets['1'] = {'2,0': {'name': 'call it', 'colour': mod.CYAN, 'state': 1}}
+    hb.mode = mod.M_HAB
+    feed(hb, ['swap\t2\t0\t4\t3'])
+    hb.shown.clear(); hb.render()
+    assert hb.shown[mod.pad(2, 0)][1] == mod.OFF, 'the cell it left is dark'
+    assert hb.shown[mod.pad(4, 3)][1] in (mod.RED, mod.CYAN), 'and this one is it'
+
+
+@pytest.mark.parametrize('src,tgt', [((2, 0), (3, 1)), ((3, 1), (2, 0)),
+                                     ((2, 0), (7, 7)), ((7, 7), (2, 0)),
+                                     ((2, 0), (2, 0))])
+def test_a_swap_never_loses_or_duplicates_a_habit(hb, src, tgt):
+    before = records(hb)
+    feed(hb, [f'swap\t{src[0]}\t{src[1]}\t{tgt[0]}\t{tgt[1]}'])
+    assert records(hb) == before
+
+
+def test_swapping_with_an_empty_cell_empties_the_one_it_left(hb):
+    feed(hb, ['swap\t2\t0\t7\t7'])
+    assert hb.habit(7, 7)['name'] == 'medication'
+    assert hb.habit(2, 0)['name'] == ''
+
+
+def test_a_swap_keeps_a_colour_that_has_no_name(hb, mod):
+    """A cell can hold a colour and no name -- see set_habit. That travels
+    too, or dragging one somewhere loses the colour it was keeping."""
+    hb.habit_sets['1']['5,5'] = {'name': '', 'colour': mod.PINK, 'state': 0}
+    feed(hb, ['swap\t5\t5\t6\t6'])
+    assert hb.habit(6, 6) == {'name': '', 'colour': mod.PINK, 'state': 0}
+    assert '5,5' not in hb.habits
+
+
+def test_a_swap_lands_on_the_tab_the_window_is_showing(hb, mod):
+    """Same reason as an edit: the reader runs on its own thread."""
+    hb.mode = mod.M_POMO                        # board moved on; window still open
+    feed(hb, ['swap\t2\t0\t3\t1'])
+    assert hb.habit_sets['1']['3,1']['name'] == 'medication'
+    assert hb.habit_sets['2'] == {}, 'the other tab untouched'
+
+
+def test_a_bad_swap_line_does_not_move_anything(hb, capsys):
+    before = records(hb)
+    feed(hb, ['swap\t2\t0\t3'])
+    assert records(hb) == before
+
+
 def test_an_edit_lands_on_the_tab_the_window_is_showing(hb, mod):
     """REGRESSION. self.habits follows the SELECTED tab. The reader runs on its
     own thread, so a set/state arriving just after the board changed tab used to

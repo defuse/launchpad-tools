@@ -150,6 +150,8 @@ Two independent grids, daily and weekly, one per tab.
 **Hold** a pad to cycle it, once per second held. **Press** it to open a window
 on screen showing the whole grid, with that habit selected, where you can rename
 habits, pick colours, drag them around to rearrange, and double-click to cycle.
+A drag moves the whole habit — name, colour and today's state travel together,
+so one dragged mid-progress is still mid-progress where it lands.
 Picking a colour for an empty cell creates the habit, named `SET NAME HERE` so
 you can type over it. Clearing a name is how a habit goes away — a pad with no
 name is dark and does nothing — but the cell keeps its colour, so deleting the
@@ -381,7 +383,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 703 tests, about fifty seconds
+tests/run-tests             # 720 tests, about fifty seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

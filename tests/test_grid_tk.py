@@ -331,38 +331,116 @@ def test_painting_flag_is_released_even_if_paint_throws(grid, say, monkeypatch):
 
 # ---- drag to swap --------------------------------------------------------
 
+def drag(grid, src, tgt):
+    """Drag src onto tgt. tgt may be a cell, or a point off the grid."""
+    def go():
+        grid.drag_start(*src)
+        if isinstance(tgt, tuple) and tgt in grid.frames:
+            f = grid.frames[tgt]
+            x, y = f.winfo_rootx() + 20, f.winfo_rooty() + 20
+        else:
+            x, y = tgt
+        grid.drag_drop(type('E', (), {'x_root': x, 'y_root': y})())
+    return capture(grid, go)
+
+
 def test_drag_swaps_two_cells(grid, say):
     say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
-    src, tgt = grid.frames[(2, 0)], grid.frames[(3, 1)]
-    buf, real = io.StringIO(), sys.stdout
-    sys.stdout = buf
-    try:
-        grid.drag_start(2, 0)
-        ev = type('E', (), {'x_root': tgt.winfo_rootx() + 20,
-                            'y_root': tgt.winfo_rooty() + 20})()
-        grid.drag_drop(ev)
-        grid.root.update()
-    finally:
-        sys.stdout = real
+    out = drag(grid, (2, 0), (3, 1))
     assert grid.habits['2,0']['name'] == 'shower'
     assert grid.habits['3,1']['name'] == 'medication'
-    assert Emitted(buf.getvalue().splitlines()).lines('set') != []
     assert grid.ghost is None and grid.drag_from is None
+    assert out == ['swap\t2\t0\t3\t1'], 'one swap, and nothing else'
+
+
+def test_a_drag_moves_the_whole_habit_not_its_name(grid, say):
+    """The bug: a drag went out as two renames, and a rename leaves the state
+    where it is -- so a habit dragged while in progress arrived unstarted and
+    the cell it came from went on flashing for it."""
+    habits = {'2,0': {'name': 'call it', 'colour': 37, 'state': 1},
+              '3,1': {'name': 'shower', 'colour': 13, 'state': 2}}
+    say('load\t' + json.dumps(habits), 'edit\t2\t0')
+    drag(grid, (2, 0), (3, 1))
+    assert grid.habits['3,1'] == {'name': 'call it', 'colour': 37, 'state': 1}
+    assert grid.habits['2,0'] == {'name': 'shower', 'colour': 13, 'state': 2}
+
+
+def test_a_drag_onto_an_empty_cell_moves_the_habit_there(grid, say):
+    say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
+    drag(grid, (2, 0), (6, 6))
+    assert grid.habits['6,6']['name'] == 'medication'
+    assert grid.habits.get('2,0', {'name': ''})['name'] == ''
+
+
+def test_the_selection_follows_the_habit(grid, say):
+    say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
+    drag(grid, (2, 0), (5, 3))
+    assert grid.focus_rc == (5, 3)
 
 
 def test_dropping_on_nothing_leaves_the_table_alone(grid, say):
     say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
     before = json.dumps(grid.habits, sort_keys=True)
-    buf, real = io.StringIO(), sys.stdout
-    sys.stdout = buf
-    try:
-        grid.drag_start(2, 0)
-        ev = type('E', (), {'x_root': 5000, 'y_root': 5000})()
-        grid.drag_drop(ev)
-    finally:
-        sys.stdout = real
+    out = drag(grid, (2, 0), (5000, 5000))
     assert json.dumps(grid.habits, sort_keys=True) == before
+    assert out == [], 'and the board is told nothing'
     assert grid.ghost is None
+
+
+def test_a_drag_moves_the_habit_on_the_board_and_on_the_pads(grid, say, board, mod):
+    """The bug end to end, since neither half showed it alone: the window had
+    the habit in its new cell, the board had the state in the old one, and the
+    pads are the board's."""
+    board.mode = mod.M_HAB
+    habits = {'2,0': {'name': 'call it', 'colour': mod.CYAN, 'state': 1}}
+    board.habit_sets['1'] = json.loads(json.dumps(habits))
+    say('load\t' + json.dumps(habits), 'edit\t2\t0')
+
+    out = drag(grid, (2, 0), (4, 3))
+    board._popup.stdout = iter(l + '\n' for l in out)
+    board._popup_reader()
+
+    assert board.habits['4,3'] == {'name': 'call it', 'colour': mod.CYAN, 'state': 1}
+    assert board.habits.get('2,0', {'name': ''})['name'] == ''
+    board.shown.clear()
+    board.render()
+    assert board.shown[mod.pad(2, 0)][1] == mod.OFF, 'the cell it left went dark'
+    assert board.shown[mod.pad(4, 3)][1] in (mod.RED, mod.CYAN)
+
+
+def test_the_window_and_the_board_agree_after_a_run_of_drags(grid, say, board, mod):
+    """Whatever the drags were, both ends hold the same habits at the end --
+    and the same set of them as at the start."""
+    board.mode = mod.M_HAB
+    habits = {'2,0': {'name': 'a', 'colour': 37, 'state': 1},
+              '2,1': {'name': 'b', 'colour': 13, 'state': 2},
+              '4,4': {'name': 'c', 'colour': 45, 'state': 0}}
+    board.habit_sets['1'] = json.loads(json.dumps(habits))
+    say('load\t' + json.dumps(habits), 'edit\t2\t0')
+
+    def deliver(lines):
+        board._popup.stdout = iter(l + '\n' for l in lines)
+        board._popup_reader()
+
+    for src, tgt in [((2, 0), (5, 5)), ((2, 1), (2, 0)), ((4, 4), (5, 5)),
+                     ((5, 5), (7, 0)), ((2, 0), (2, 0))]:
+        deliver(drag(grid, src, tgt))
+
+    def triples(table):
+        return sorted((h['name'], h['colour'], h.get('state', 0))
+                      for h in table.values() if h.get('name'))
+    assert triples(board.habits) == triples(habits), 'nothing lost or duplicated'
+    named = lambda t: {k: v for k, v in t.items() if v.get('name')}
+    assert named(grid.habits) == named(board.habits), \
+        'the same habits in the same cells at both ends'
+
+
+def test_dropping_a_cell_on_itself_changes_nothing(grid, say):
+    say('load\t' + json.dumps(HABITS), 'edit\t2\t0')
+    before = json.dumps(grid.habits, sort_keys=True)
+    out = drag(grid, (2, 0), (2, 0))
+    assert json.dumps(grid.habits, sort_keys=True) == before
+    assert out == []
 
 
 def test_an_abandoned_drag_does_not_strand_the_ghost(grid, say):

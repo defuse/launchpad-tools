@@ -22,6 +22,9 @@ stdout:  set R C NAME COLOUR      emitted as soon as a name or colour changes
          state R C V              a cell's state changed (applies immediately,
                                   like holding the pad -- NOT part of the
                                   name/colour transaction, so Esc leaves it)
+         swap R1 C1 R2 C2         two cells exchanged by a drag, whole: name,
+                                  colour and state travel together, which two
+                                  renames would not do
          closed                   the edit session ended (Enter or Esc)
 
 Every change applies immediately -- typing, colours, drags, state -- and is sent
@@ -290,7 +293,11 @@ class Grid:
             self.pull_names()
             a,b = dict(self.get(*src)), dict(self.get(*tgt))
             self.put(src[0],src[1],b); self.put(tgt[0],tgt[1],a)
-            self.emit(*src); self.emit(*tgt)
+            # one swap, not two renames: a rename carries a name and a colour
+            # and leaves the state where it was, so a habit dragged while in
+            # progress arrived unstarted and the cell it left went on flashing
+            sys.stdout.write(f'swap\t{src[0]}\t{src[1]}\t{tgt[0]}\t{tgt[1]}\n')
+            sys.stdout.flush()
             self.focus_rc = tgt
             self.paint()
 
