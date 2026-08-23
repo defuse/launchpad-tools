@@ -90,6 +90,7 @@ and then counts itself down:
 | 23:30 | orange, pomodoro cadence |
 | 23:40 | red, twice that |
 | 23:50 | red, rapid |
+| 23:55 | red, panic strobe |
 
 Slowing the blink lengthens the lit chunk rather than the gap — a dark chunk
 that grows with the period stops reading as a blink and starts reading as a pad

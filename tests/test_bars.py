@@ -68,7 +68,9 @@ def test_week_bar_counts_down_to_sunday(mod):
     (23, 40, 'RED',    0.9),            # twice that
     (23, 49, 'RED',    0.9),
     (23, 50, 'RED',    0.3),            # rapid
-    (23, 59, 'RED',    0.3),
+    (23, 54, 'RED',    0.3),
+    (23, 55, 'RED',    0.2),            # panic
+    (23, 59, 'RED',    0.2),
 ])
 def test_the_daily_bar_counts_itself_down_through_the_last_hour(mod, h, mi, colour, period):
     _, left = mod.DAY.bar(at(2026, 8, 18, h, mi))
@@ -89,7 +91,7 @@ def test_the_last_hour_warms_from_yellow_to_red(mod):
     """Colour escalates with the rate, so the bar reads at a glance and from
     the corner of an eye both -- and never doubles back to a cooler colour."""
     assert [st.colour for st in mod.BAR_STAGES] == \
-        [mod.RED, mod.RED, mod.ORANGE, mod.YELLOW]      # shortest-remaining first
+        [mod.RED, mod.RED, mod.RED, mod.ORANGE, mod.YELLOW]   # shortest first
     assert mod.DAY.full not in [st.colour for st in mod.BAR_STAGES], \
         'a full bar must not already be wearing an escalation colour'
 
@@ -101,6 +103,13 @@ def test_each_stage_blinks_faster_than_the_one_before(mod):
     periods = [st.on + st.off for st in mod.BAR_STAGES]
     assert periods == sorted(periods)
     assert [st.within for st in mod.BAR_STAGES] == sorted(st.within for st in mod.BAR_STAGES)
+
+
+def test_nothing_blinks_faster_than_the_board_is_drawn(mod):
+    """Under two frames a phase the blink aliases against the render loop: it
+    comes out irregular, and at exactly one frame it can hold still."""
+    for st in mod.BAR_STAGES:
+        assert st.on >= 2 * mod.TICK and st.off >= 2 * mod.TICK
 
 
 def test_the_weekly_bar_has_one_stage_and_it_is_solid(mod):

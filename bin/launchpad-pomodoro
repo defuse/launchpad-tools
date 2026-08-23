@@ -25,7 +25,7 @@ day. A cell lights as its slice STARTS, so a full bar means you are inside the
 last slice -- the weekly bar turns pink for Saturday, while the daily one stays
 blue until an hour is left and then counts itself down: yellow blinking slowly
 from 23:00, orange at the pomodoro cadence from 23:30, red at twice that from
-23:40, and rapid red from 23:50.
+23:40, rapid red from 23:50, and a panic strobe for the last five minutes.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -80,6 +80,10 @@ CH_STATIC, CH_FLASH, CH_PULSE = 0, 1, 2      # MIDI channels select the mode
 # clock, so the in-progress pad is blinked in software instead: mostly lit with
 # a short blink off, which reads as "this one is live" rather than "alert".
 FLASH_ON, FLASH_OFF = 1.5, 0.3
+# One frame. Nothing may blink faster than two frames per phase: the board is
+# only redrawn this often, so a shorter phase aliases against the loop and can
+# come out looking irregular, or hold still altogether.
+TICK = 0.05
 
 OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
 YELLOW, CYAN = 13, 33
@@ -189,6 +193,7 @@ class Stage(NamedTuple):
 #
 # First match wins, so these are ordered shortest-remaining first.
 BAR_STAGES = (
+    Stage(5 * 60,  RED,    2 * TICK, 2 * TICK),            # 23:55: panic
     Stage(10 * 60, RED,    0.15, 0.15),                    # 23:50: rapid
     Stage(20 * 60, RED,    FLASH_ON / 2, FLASH_OFF / 2),   # 23:40: twice pomodoro
     Stage(30 * 60, ORANGE, FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
@@ -1012,7 +1017,7 @@ def main():
                     # keep the board alive; a bad frame is not worth a restart
                     print(f"tick/render error: {e!r}", flush=True)
                     time.sleep(0.5)
-                time.sleep(0.05)
+                time.sleep(TICK)
         except KeyboardInterrupt:
             pass
         finally:
