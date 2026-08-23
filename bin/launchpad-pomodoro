@@ -22,8 +22,9 @@ Pomodoro board on a Novation Launchpad Mini MK3.
 The habit tabs give up their top row to the same kind of bar, each for its own
 period: the daily tab shows the day, the weekly one shows the week, a pad per
 day. A cell lights as its slice STARTS, so a full bar means you are inside the
-last slice -- the daily bar goes red for its final three hours and blinks
-harder through the last one.
+last slice -- the daily bar goes red for its final three hours, then spends the
+last hour counting itself down: yellow blinking slowly from 23:00, red at the
+pomodoro cadence from 23:30, twice that from 23:40, rapid from 23:50.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -166,13 +167,31 @@ PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
 # not when it ends, so a full bar means "you are inside the last slice".
 # Lighting on the way out would put the final cell on the stroke of midnight,
 # where the reset replaces it with an empty bar in the same instant.
-BAR_FULL = RED                                     # full: nearly out of period
-# Escalation through the final hour, for the periods that flash. Same duty
-# cycle trick as the pomodoro blink -- chunks cut out of a lit pad rather than
-# a 50% square wave, which reads as urgency instead of an error.
-BAR_FLASH = ((15 * 60, 0.15, 0.15),                # last 15 min: rapid
-             (30 * 60, 0.75, 0.15),                # last 30 min: twice as fast
-             (60 * 60, FLASH_ON, FLASH_OFF))       # last hour: pomodoro cadence
+class Stage(NamedTuple):
+    """How a FULL bar looks with a given amount of the period left."""
+    within: int                        # applies at or below this many seconds left
+    colour: int
+    on:     float                      # seconds lit
+    off:    float                      # seconds dark; 0 means solid
+
+
+# A full bar is red and still. Through the final hour it starts saying so: a
+# slow yellow blink first, which reads as a heads-up rather than more of the
+# same red, then red blinking harder every ten minutes.
+#
+# Changing the rate lengthens or shortens the LIT chunk; the dark one stays at
+# FLASH_OFF. A gap that grows with the period stops reading as a blink and
+# starts reading as a pad that is off. Only the last two stages shorten it,
+# where the whole cycle is too short to fit 0.3 s of darkness in.
+#
+# First match wins, so these are ordered shortest-remaining first.
+BAR_STAGES = (
+    Stage(10 * 60, RED,    0.15, 0.15),                    # 23:50: rapid
+    Stage(20 * 60, RED,    FLASH_ON / 2, FLASH_OFF / 2),   # 23:40: twice pomodoro
+    Stage(30 * 60, RED,    FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
+    Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
+)
+BAR_FULL = Stage(None, RED, 0, 0)                  # full, with time still to run
 
 
 def _into_day(t):
@@ -214,15 +233,19 @@ class Period(NamedTuple):
         lit = int(into // self.step) + 1
         return (CELLS if lit >= self.slices else lit), self.length - into
 
-    def cadence(self, left):
-        """(on, off) seconds for the blink with `left` seconds to run, or None
-        for no blink at all."""
+    def stage(self, left):
+        """How a full bar of this period looks with `left` seconds to run.
+
+        A period that does not flash only ever has the one stage: solid, for
+        however long it stays full. The weekly bar is full for a whole day, and
+        a day of blinking pads is noise rather than urgency.
+        """
         if not self.flashes:
-            return None
-        for limit, on, off in BAR_FLASH:
-            if left <= limit:
-                return on, off
-        return None
+            return BAR_FULL
+        for st in BAR_STAGES:
+            if left <= st.within:
+                return st
+        return BAR_FULL
 
 
 DAY  = Period('day', BLUE, slices=CELLS, step=3 * 3600, into=_into_day, flashes=True)
@@ -556,14 +579,13 @@ class Board:
     def render_bar(self, period):
         """BAR_ROW: how much of `period` has begun. See Period."""
         lit, left = period.bar()
-        full = lit >= CELLS
-        colour = BAR_FULL if full else period.colour
-        beat = period.cadence(left) if full else None
+        stage = period.stage(left) if lit >= CELLS else None
+        colour = stage.colour if stage else period.colour
         for c in range(CELLS):
             p = pad(BAR_ROW, c)
-            if c >= lit:   self.set(p, OFF)
-            elif beat:     self.flash(p, colour, *beat)
-            else:          self.set(p, colour)
+            if c >= lit:                self.set(p, OFF)
+            elif stage and stage.off:   self.flash(p, colour, stage.on, stage.off)
+            else:                       self.set(p, colour)
 
     def render_timers(self):
         """Every timer row on the pomodoro tab, each its own progress bar."""

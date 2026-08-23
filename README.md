@@ -77,11 +77,19 @@ means you are inside the last one. Lighting on the way out would put the final
 cell on the stroke of midnight, replaced by an empty bar in the same instant.
 Seven days share eight cells, so the spare one lights with the seventh.
 
-A full bar turns red. The daily one then blinks through the last hour —
-pomodoro cadence from 23:00, twice that from 23:30, rapid from 23:45 — by
-cutting chunks out of a lit pad rather than blinking on and off, which reads as
-urgency instead of an error. The weekly bar never blinks: it is full for a
-whole day.
+A full bar turns red and sits still. The daily one then spends the last hour
+counting itself down:
+
+| | |
+|---|---|
+| 23:00 | yellow, blinking at half the pomodoro rate |
+| 23:30 | red, pomodoro cadence |
+| 23:40 | red, twice that |
+| 23:50 | red, rapid |
+
+Slowing the blink lengthens the lit chunk rather than the gap — a dark chunk
+that grows with the period stops reading as a blink and starts reading as a pad
+that is off. The weekly bar never blinks: it is full for a whole day.
 
 ## Meters
 
