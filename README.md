@@ -124,3 +124,5 @@ wrong silently wiped running timers for a while.
 
 Written for a Launchpad Mini MK3 in Programmer Mode. Other Launchpads use
 different SysEx and a different pad numbering, so they will not work unmodified.
+
+MIT, see [LICENSE](LICENSE).
