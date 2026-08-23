@@ -209,19 +209,23 @@ bottom uses htop's colours.
 ## Network
 
 ```
- 1   ·  ·  ·  ·   ·  ·  ·  ·    download on the left, upload on the right
- 2   ·  ·  ·  ·   ·  ·  ·  ·
- 3   C  C  ·  ·   ·  ·  ·  ·
- 4   C  C  C  C   O  ·  ·  ·
- 5   C  C  C  C   O  O  ·  ·
- 6   C  C  C  C   O  O  O  O
- 7   C  C  C  C   O  O  O  O
+ 1   · · · · · · · ·    download on the left, upload on the right
+ 2   · · · · · · · ·
+ 3   · · · · · · · ·
+ 4   · · · · · · · ·
+ 5   C C · · · · · ·    the fill snakes: each row
+ 6   C C C C · · O O    picks up where the one below stopped
+ 7   C C C C O O O O
 ```
 
 Two half-width bars filling from the bottom. Each row is four pads, so a
 part-filled row gives four times the resolution of whole rows alone. The scale
 is logarithmic, from about 1 KB/s to about 1 Gbit/s, because a linear one sits
 at zero all day.
+
+Every other row runs the other way, so the lit pads are one unbroken run rather
+than a stack of rows each restarting at the left — growth reads as growth
+wherever in the row it happens to be.
 
 ## Bars
 
@@ -289,7 +293,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 403 tests, about eleven seconds
+tests/run-tests             # 406 tests, about eleven seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

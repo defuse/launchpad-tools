@@ -287,6 +287,40 @@ def test_a_sensor_that_cannot_be_read_is_dark_not_alarming(mach, mod):
     assert middle(mach, mod, mod.TEMP_ROW, 1)[0] == mod.OFF
 
 
+# ---- the network meter ---------------------------------------------------
+def test_the_snake_turns_around_on_every_other_row(mod):
+    assert [mod.snake(0, j, 4) for j in range(4)] == [0, 1, 2, 3]
+    assert [mod.snake(1, j, 4) for j in range(4)] == [3, 2, 1, 0]
+    assert [mod.snake(2, j, 4) for j in range(4)] == [0, 1, 2, 3]
+
+
+def test_the_fill_is_one_unbroken_run(mod):
+    """Each row picks up where the one below it stopped, so the bar climbs
+    rather than restarting at the left every four steps."""
+    width = 4
+    path = [(row, mod.snake(row, step, width))
+            for row in range(7) for step in range(width)]
+    for (r1, c1), (r2, c2) in zip(path, path[1:]):
+        same_row = r1 == r2 and abs(c1 - c2) == 1
+        next_row = r2 == r1 + 1 and c1 == c2
+        assert same_row or next_row, f'{(r1, c1)} to {(r2, c2)} is a jump'
+
+
+def test_the_network_meter_paints_a_snake(board, mod, out, monkeypatch):
+    monkeypatch.setattr(board, 'net_rates', lambda: (5e5, 0.0))   # download only
+    board.mode = mod.M_NET
+    board.shown.clear(); out.sent.clear()
+    board.render_net()
+    lit = out.lit()
+    rows = list(reversed(mod.CPU_ROWS + [mod.MEM_ROW]))
+    on = [(i, c) for i, r in enumerate(rows) for c in range(4)
+          if lit.get(mod.pad(r, c)) == mod.CYAN]
+    assert on, 'something is lit'
+    order = [(i, mod.snake(i, j, 4)) for i in range(len(rows)) for j in range(4)]
+    assert on == sorted(on), 'lit pads listed bottom-up'
+    assert set(on) == set(order[:len(on)]), 'and they are the first N of the snake'
+
+
 # ---- the control row -----------------------------------------------------
 SINKS = ('game_stereo', 'alsa_output.usb-AT_ATH-M50xSTS-USB-00.analog-stereo')
 SOURCES = ('alsa_input.usb-AT_ATH-M50xSTS-USB-00.mono-fallback',)

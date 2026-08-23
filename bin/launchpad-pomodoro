@@ -652,6 +652,15 @@ def drive_temps():
     return tuple((k, v[0], v[1]) for k, v in sorted(out.items()))
 
 
+def snake(row, step, width):
+    """Column that `step` occupies in `row`, counting rows up from the bottom.
+
+    Every other row runs the other way, so a bar climbing the board is one
+    unbroken run instead of a stack of rows that each restart at the left.
+    """
+    return step if row % 2 == 0 else width - 1 - step
+
+
 def centred(n):
     """Column the first of `n` indicators sits at, centred across the row.
 
@@ -1697,7 +1706,12 @@ class Board:
     def render_net(self):
         """Two half-width bars filling from the bottom. Each row is 4 pads, so a
         part-filled row gives 4x the resolution of whole rows alone. Log scale --
-        network rates span decades and a linear bar would sit at zero all day."""
+        network rates span decades and a linear bar would sit at zero all day.
+
+        The fill snakes: every other row runs the other way, so the lit pads
+        are one unbroken run rather than a stack of rows that each restart at
+        the left. Growth then reads as growth, wherever in the row it is.
+        """
         import math
         LO, HI = 1e3, 1.25e8                       # 1 KB/s .. ~1 Gbit/s
         rows = list(reversed(CPU_ROWS + [MEM_ROW]))   # bottom-up, 7 rows
@@ -1709,8 +1723,9 @@ class Board:
             lit = int(round(frac * steps))
             for i, r in enumerate(rows):
                 for j in range(half):
-                    n = i * half + j
-                    self.set(pad(r, side * half + j), colour if n < lit else OFF)
+                    n = i * half + j                   # how far along the snake
+                    col = snake(i, j, half)
+                    self.set(pad(r, side * half + col), colour if n < lit else OFF)
 
     def render_sys(self):
         # memory across the bottom row, htop's colours: used green,
