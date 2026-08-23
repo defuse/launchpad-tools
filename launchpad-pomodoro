@@ -11,7 +11,10 @@ Pomodoro board on a Novation Launchpad Mini MK3.
                 letting go early cancels -- a corner pad is too easy to brush
                 for a single press to be allowed to kill a running timer.
   rows 7..3     five independent pomodoro timers, one per row.
-  rows 2..1     free toggles, press cycles off -> red -> green -> off.
+  row 2         free toggles, press cycles off -> red -> green -> off.
+  row 1         break timer. The same state machine as a pomodoro row, but
+                8 x 1 min = 8 min, idle light blue instead of white, and it
+                fills blue instead of green.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -96,12 +99,25 @@ FUNC_ROW   = 0
 RESET_COL  = 7                                # top-right pad
 RESET_HOLD = 2.0                              # seconds to hold before it fires
 POMO_ROWS  = [1, 2, 3, 4, 5]
-TOGGLE_ROWS= [6, 7]
+BREAK_ROW  = 7                                # same machine, shorter and blue
+TIMER_ROWS = POMO_ROWS + [BREAK_ROW]
+TOGGLE_ROWS= [6]
 # system monitor: memory across the bottom row, CPU columns in the rows above
 MEM_ROW    = 7
 CPU_ROWS   = [1, 2, 3, 4, 5, 6]           # drawn bottom-up
 CELLS      = 8
 SECS_PER_CELL = 3 * 60                        # 8 * 3 min = 24 min
+BREAK_SECS_PER_CELL = 60                      # 8 * 1 min = 8 min
+
+def row_style(r):
+    """(seconds per cell, idle colour, fill colour) for a timer row.
+
+    The break row runs the identical state machine as a pomodoro row -- only
+    its length and palette differ, so there is one implementation rather than
+    two that can drift apart."""
+    if r == BREAK_ROW:
+        return BREAK_SECS_PER_CELL, SKY, BLUE
+    return SECS_PER_CELL, WHITE, GREEN
 STATE_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro.json')
 SOUND_DIR  = os.path.expanduser('~/.local/share/launchpad-pomodoro')
 PLAYER     = shutil.which('paplay') or shutil.which('pw-play')
@@ -123,7 +139,7 @@ class Board:
     def __init__(self, out):
         self.out = out
         self.shown = {}                        # pad -> (channel, colour)
-        self.rows = {r: {'state': IDLE, 'started': 0.0} for r in POMO_ROWS}
+        self.rows = {r: {'state': IDLE, 'started': 0.0} for r in TIMER_ROWS}
         self.toggles = {}                      # (row,col) -> 0/1/2
         # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
         # every tab reuses the same 64 physical pads, so note 61 is both habit
@@ -360,9 +376,10 @@ class Board:
             self.render_habits()
             return
         now = time.time()
-        for r in POMO_ROWS:
+        for r in TIMER_ROWS:
             st = self.rows[r]
             s = st['state']
+            secs, idle_col, fill_col = row_style(r)
 
             # holding the leftmost pad abandons the row; show it filling
             # (only reachable in pomodoro mode -- render_sys returns earlier)
@@ -374,7 +391,7 @@ class Board:
                     self.held.pop(pad(r, 0), None)
                     self.save()
                     for c in range(CELLS):
-                        self.set(pad(r, c), WHITE if c == 0 else OFF)
+                        self.set(pad(r, c), idle_col if c == 0 else OFF)
                     continue
                 if frac > 0.08:                # ignore an ordinary tap
                     n = int(frac * CELLS) + 1
@@ -385,21 +402,21 @@ class Board:
             # runs first, so the elapsed handover (and its chime) lives there --
             # doing it in both meant two places could fire the same transition.
             if s == RUNNING:
-                done = min(int((now - st['started']) // SECS_PER_CELL), CELLS - 1)
+                done = min(int((now - st['started']) // secs), CELLS - 1)
                 for c in range(CELLS):
                     p = pad(r, c)
-                    if c < done:    self.set(p, GREEN)
-                    elif c == done: self.flash(p, GREEN)
+                    if c < done:    self.set(p, fill_col)
+                    elif c == done: self.flash(p, fill_col)
                     else:           self.set(p, OFF)
             elif s == ELAPSED:
                 for c in range(CELLS):
-                    self.set(pad(r, c), GREEN if c == CELLS - 1 else RED)
+                    self.set(pad(r, c), fill_col if c == CELLS - 1 else RED)
             elif s == CLAIMED:
                 for c in range(CELLS):
-                    self.set(pad(r, c), GREEN)
+                    self.set(pad(r, c), fill_col)
             else:                                  # IDLE, and anything unknown
                 for c in range(CELLS):
-                    self.set(pad(r, c), WHITE if c == 0 else OFF)
+                    self.set(pad(r, c), idle_col if c == 0 else OFF)
 
         for r in TOGGLE_ROWS:
             for c in range(CELLS):
@@ -427,9 +444,10 @@ class Board:
                     self._hold_count[note] = due
                     for _ in range(due - done):
                         self.cycle_state(*got)
-        for r in POMO_ROWS:
+        for r in TIMER_ROWS:
             st = self.rows[r]
-            if st['state'] == RUNNING and (now - st['started']) >= CELLS * SECS_PER_CELL:
+            secs, _, _ = row_style(r)
+            if st['state'] == RUNNING and (now - st['started']) >= CELLS * secs:
                 st['state'] = ELAPSED
                 self.save()
                 ding('finish.wav')
@@ -613,7 +631,7 @@ class Board:
                         self._editing = None
         elif self.mode in HAB_MODES and lr in HAB_ROWS:
             pass                       # decided on release, or by the hold timer
-        elif self.mode == M_POMO and lr in POMO_ROWS: self.pomo_press(lr, lc)
+        elif self.mode == M_POMO and lr in TIMER_ROWS: self.pomo_press(lr, lc)
         elif self.mode == M_POMO and lr in TOGGLE_ROWS:
             self.toggles[(lr, lc)] = (self.toggles.get((lr, lc), 0) + 1) % 3
             self.save()
@@ -630,7 +648,7 @@ class Board:
                 h['state'] = 0
             self._popup_send_table()           # the window shows state too
         elif self.mode == M_POMO:
-            for r in POMO_ROWS:
+            for r in TIMER_ROWS:
                 self.rows[r] = {'state': IDLE, 'started': 0.0}
             self.toggles = {}
         else:
