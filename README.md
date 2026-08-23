@@ -103,11 +103,11 @@ unstarted.
  3   Y  G  G  G  ·  ·  ·  ·     filesystems — / · home · Data-1 · Fast-1
  4   ·  ·  ·  ·  ·  ·  ·  ·
  5   G  G  G  ·  ·  ·  ·  ·     temperatures — CPU · GPU · NVMe
- 6   ·  ·  ·  ·  ·  ·  ·  ·
- 7   B  W  W  G  ·  W  S  W     speakers · headset · sub | effects | prev play next
+ 6   ·  ·  ·  ·  ·  W  S  W     transport — prev · play/pause · next
+ 7   B  W  ·  W  G  ·  ·  ·     speakers · headset | sub · effects
 ```
 
-Everything above the bottom row is read-only:
+Everything above those last two rows is read-only:
 
 | | |
 |---|---|
@@ -120,7 +120,10 @@ pair of drives and it is the drive that dies. A drive that has vanished entirely
 has no pad to light — `/proc/mdstat` only names what is still there — so what
 you see in that case is its array's surviving half going amber.
 
-The bottom row is the only part you can press. The two output pads are white
+The bottom two rows are the only part you can press, and they are kept apart on
+purpose: the transport has its own row so a mis-hit skips a track rather than
+changing what the speakers are doing, and a gap separates choosing an output
+from silencing the sub. The two output pads are white
 with the current one blue; picking the headset takes its microphone with it.
 Next to them the subwoofer pad is white while the sub is passing signal and red
 while it is muted. The interface sums the sub's channels into the speakers as
@@ -277,7 +280,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 379 tests, about ten seconds
+tests/run-tests             # 380 tests, about ten seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 
