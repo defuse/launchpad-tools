@@ -38,6 +38,7 @@ def grid():
         g = mod.Grid()
     except tk.TclError as e:                                      # pragma: no cover
         pytest.skip(f'cannot open a window: {e}')
+    g.mod = mod
     g.root.update()
     yield g
     try:
@@ -87,28 +88,62 @@ def test_hide_withdraws_it(grid):
 
 # ---- the control row -----------------------------------------------------
 
-CONTROLS = [{'r': 7, 'c': 0, 'name': 'speakers', 'value': 'in use',
-             'detail': 'everything comes out here', 'colour': '#5a7bff'},
-            {'r': 7, 'c': 1, 'name': 'headset', 'value': 'ready',
+CONTROLS = [{'r': 7, 'c': 0, 'name': '', 'value': 'game_stereo',
+             'detail': '', 'colour': '#5a7bff'},
+            {'r': 7, 'c': 1, 'name': '', 'value': 'AT_ATH-M50xSTS',
              'detail': 'press to switch to it', 'colour': '#e8e8e8'},
-            {'r': 7, 'c': 4, 'name': 'effects', 'value': 'headphones',
+            {'r': 7, 'c': 4, 'name': '', 'value': 'EasyEffects',
              'detail': 'm50x', 'colour': '#ff8c1a'}]
 
 
 def test_the_buttons_are_a_row_of_the_window(grid):
     say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
-    assert grid.values[(7, 0)].cget('text') == 'in use'
-    assert grid.names[(7, 4)].cget('text') == 'effects'
+    assert grid.values[(7, 0)].cget('text') == 'game_stereo'
+    assert grid.values[(7, 4)].cget('text') == 'EasyEffects'
     assert grid.details[(7, 4)].cget('text') == 'm50x'
     assert grid.values[(7, 4)].cget('fg') == '#ff8c1a'
 
 
-def test_the_row_is_named_in_the_gap_between_the_buttons(grid):
-    """The gap in the middle of the control row is where the title goes -- the
-    same rule as the readouts, which are centred and leave one."""
+def test_the_control_row_has_no_title(grid):
+    """A row of buttons that name themselves does not need a word saying they
+    are buttons."""
     say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
-    assert grid.titles[(7, 2)].cget('text') == 'controls'
-    assert grid.titles[(7, 0)].cget('text') == ''
+    assert all(grid.titles[(7, c)].cget('text') == '' for c in range(8))
+    assert grid.titles[(2, 0)].cget('text') == 'disks', 'the readouts keep theirs'
+
+
+def size_of(grid, w):
+    import tkinter.font as tkfont
+    return tkfont.Font(root=grid.root, font=w.cget('font')).actual('size')
+
+
+def test_a_long_reading_is_set_smaller_than_a_short_one(grid):
+    """`41C` and `AT_ATH-M50xSTS` are both readings, and the cell is the same
+    width for both."""
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    assert size_of(grid, grid.values[(7, 1)]) < size_of(grid, grid.values[(4, 1)])
+
+
+def test_a_reading_is_never_set_larger_than_the_standard_size(grid):
+    """It shrinks to fit and never grows to fill. Sizing every cell to its own
+    text would blow up the short ones and put a row of readings at three
+    different sizes."""
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    for v in grid.values.values():
+        assert size_of(grid, v) <= grid.mod.VALUE_SIZES[0]
+    assert size_of(grid, grid.values[(2, 1)]) == grid.mod.VALUE_SIZES[0], \
+        'and a short one is not shrunk for nothing'
+
+
+def test_a_reading_is_never_wider_than_its_cell(grid):
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    import tkinter.font as tkfont
+    for (r, c), v in grid.values.items():
+        text = v.cget('text')
+        if text:
+            f = tkfont.Font(root=grid.root, font=v.cget('font'))
+            assert f.measure(text) <= grid.frames[(r, c)].winfo_width(), \
+                f'{text!r} overflows its cell'
 
 
 def test_the_blank_row_is_blank(grid):

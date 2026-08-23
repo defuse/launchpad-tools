@@ -181,12 +181,16 @@ how many gigabytes and what share of the volume that is. Releasing the pad
 closes it; tapping the red pad opens the same window and leaves it open.
 
 The control row is in that window too, along the bottom where it is on the
-board, each button saying what it is, what it is doing and what pressing it
-would do — `sub / on / press to mute`, `effects / headphones / m50x`. Nothing in
-the window is clickable: it is a readout, the pads are where you press, and a
-second set of handlers for the same eight buttons is a second set to keep right.
-An open window is kept current, since the row changes under it every time a pad
-switches the output or mutes the sub.
+board. Each button says what it **is** — the sink's own name, `sub`,
+`EasyEffects`, a transport icon — and its state is the colour, the same colour
+the pad is showing. Underneath, what a press would do, and only when there is
+something to do: the output you are already on says nothing. The `EasyEffects`
+cell names the loaded preset, which is the part the colour can only hint at.
+
+Nothing in the window is clickable: it is a readout, the pads are where you
+press, and a second set of handlers for the same eight buttons is a second set
+to keep right. An open window is kept current, since the row changes under it
+every time a pad switches the output or mutes the sub.
 
 Rows 2 and 4 are the same six drives in the same order, so a column is one
 drive: its array state above, its temperature below. Drive temperatures need
@@ -367,7 +371,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 673 tests, about forty-five seconds
+tests/run-tests             # 679 tests, about forty-five seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

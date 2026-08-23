@@ -28,6 +28,7 @@ down.
 """
 import sys, json, re, subprocess, threading, queue
 import tkinter as tk
+import tkinter.font as tkfont
 
 # every row of the machine tab that has something on it. 6 is blank on the
 # board and blank here: it is the gap between what the tab reports and what it
@@ -38,10 +39,13 @@ CTRL_ROW = 7                               # the one row of the tab you press
 COLS = 8
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 YELLOW_B = '#ffd21a'                       # the held cell, as in habit-popup
-TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps',
-          7: 'controls'}
+# the control row has no title: a row of buttons naming themselves does not
+# need a word saying they are buttons
+TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps'}
 CELL_H = 210                               # a row's height; the grid centres
 GAP_H = 44                                 # ...and a blank row's
+# the size a reading is set at, and what it falls back to if it does not fit
+VALUE_SIZES = (34, 30, 26, 22, 18, 15)
 
 
 def g9_centre_box():
@@ -78,6 +82,7 @@ class Grid:
         self.cells = {}                    # (r,c) -> {name, value, colour}
         self.focus_rc = None
         self._fits = []
+        self._fonts = {}                   # size -> Font, for measuring
         self.root = tk.Tk()
         self.root.title('machine')
         self.root.configure(bg=BG)
@@ -111,12 +116,11 @@ class Grid:
                 n.pack(anchor='nw', padx=10, pady=(6, 0), fill='x')
                 self.names[(r, c)] = n
                 # the reading itself, and under it the part that qualifies it.
-                # A control's reading is a word rather than a number -- 'in
-                # use', 'headphones' -- so it is set smaller to fit the cell
+                # The size is settled in paint(), against the cell it has to
+                # fit: `41C` and `AT_ATH-M50xSTS` are both readings
                 mid = tk.Frame(f, bg=CELL_BG)
                 mid.pack(expand=True)
-                v = tk.Label(mid, text='',
-                             font=('DejaVu Sans', 26 if r == CTRL_ROW else 34, 'bold'),
+                v = tk.Label(mid, text='', font=('DejaVu Sans', 34, 'bold'),
                              fg=MUTED, bg=CELL_BG)
                 v.pack()
                 self.values[(r, c)] = v
@@ -161,6 +165,32 @@ class Grid:
             pass
 
     # ---- painting --------------------------------------------------------
+    def _font(self, size):
+        font = self._fonts.get(size)
+        if font is None:
+            font = self._fonts[size] = tkfont.Font(
+                root=self.root, family='DejaVu Sans', size=size, weight='bold')
+        return font
+
+    def value_font(self, text, frame):
+        """The readings are set at one size, and shrink only to fit.
+
+        Everything on this window is a few characters -- `41C`, `812 GB`, a
+        transport icon -- except a sink, which is called `AT_ATH-M50xSTS`. One
+        fixed size would run that off the side of its cell; sizing every cell
+        to its own text would blow up the short ones and put a row of readings
+        at three different sizes. So: the standard size, unless the text does
+        not fit, and then the largest that does.
+        """
+        room = frame.winfo_width() - 24
+        if room < 40:                          # not laid out yet; paint again later
+            room = 240
+        for size in VALUE_SIZES:
+            font = self._font(size)
+            if font.measure(text) <= room:
+                return font
+        return self._font(VALUE_SIZES[-1])
+
     def paint(self):
         for r in ROWS:
             if r in GAP_ROWS:
@@ -173,8 +203,10 @@ class Grid:
             for c in range(COLS):
                 cell = self.cells.get((r, c))
                 colour = (cell or {}).get('colour') or MUTED
-                self.values[(r, c)].configure(text=(cell or {}).get('value', ''),
-                                              fg=colour)
+                text = (cell or {}).get('value', '')
+                self.values[(r, c)].configure(
+                    text=text, fg=colour,
+                    font=self.value_font(text, self.frames[(r, c)]))
                 self.details[(r, c)].configure(text=(cell or {}).get('detail', ''))
                 self.names[(r, c)].configure(text=(cell or {}).get('name', ''))
                 self.titles[(r, c)].configure(
@@ -200,6 +232,9 @@ class Grid:
             self.root.attributes('-topmost', True)
             self.root.update_idletasks()
             self.fit()
+            # again now that the cells have a width: the first paint sized the
+            # readings against a grid that had not been laid out yet
+            self.paint()
             for ms in (120, 600):
                 self._fits.append(self.root.after(ms, self.fit))
         elif cmd == 'hide':

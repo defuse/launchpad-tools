@@ -142,7 +142,11 @@ def audio(mach, mod):
 
 
 def controls(mach, mod):
-    mach.toggle_window()
+    """The control row as the window has it, opening the window if need be.
+    Safe to call again after changing the snapshot."""
+    if mach._window is None:
+        mach.toggle_window()
+    mach._machine_send()
     return {c: cell for (r, c), cell in cells(mod).items() if r == mod.CTRL_ROW}
 
 
@@ -154,34 +158,59 @@ def test_every_button_is_in_the_window_and_the_gap_is_not(audio, mod):
     assert sorted(got) == want
 
 
-def test_a_button_says_what_it_is_and_what_it_is_doing(audio, mod):
+def test_a_button_says_what_it_is(audio, mod):
+    """What it IS, not what it is doing: the state is the colour, and a cell
+    that also spelled it out would be saying it twice and could disagree with
+    itself."""
     c = controls(audio, mod)
-    assert (c[0]['name'], c[0]['value']) == ('speakers', 'in use')
-    assert (c[1]['name'], c[1]['value']) == ('headset', 'ready')
+    assert c[0]['value'] == mod.GAME_SINK, 'the sink is called what it is called'
+    assert c[1]['value'] == mod.HEADSET
+    assert c[3]['value'] == 'sub'
+    assert c[4]['value'] == 'EasyEffects'
+    assert c[6]['value'] == '⏯' and c[5]['value'] == '⏮' and c[7]['value'] == '⏭'
+
+
+def test_no_button_carries_a_label(audio, mod):
+    """A drive temperature needs its drive named; game_stereo does not need a
+    line above it saying speakers."""
+    assert all(cell['name'] == '' for cell in controls(audio, mod).values())
+
+
+def test_the_detail_is_what_a_press_would_do(audio, mod):
+    c = controls(audio, mod)
     assert c[1]['detail'] == 'press to switch to it'
-    assert (c[3]['name'], c[3]['value']) == ('sub', 'on')
     assert c[3]['detail'] == 'press to mute'
-    assert (c[4]['name'], c[4]['value']) == ('effects', 'speakers')
-    assert c[4]['detail'] == 'room', 'the preset by name'
-    assert (c[6]['name'], c[6]['value']) == ('play / pause', 'paused')
 
 
-def test_the_headphone_preset_is_named_as_such(audio, mod):
+def test_the_output_you_are_on_has_nothing_to_say(audio, mod):
+    """Same rule as the pomodoro window's hints: an instruction for something
+    you cannot do is an instruction in the way."""
+    assert controls(audio, mod)[0]['detail'] == ''
+
+
+def test_the_effects_cell_names_the_preset(audio, mod):
+    """Which one is loaded is the thing the colour is only hinting at, and the
+    names are the user's to change."""
+    assert controls(audio, mod)[4]['detail'] == 'room'
     audio.machine.snap = audio.machine.snap._replace(preset='m50x')
+    assert controls(audio, mod)[4]['detail'] == 'm50x'
+    audio.machine.snap = audio.machine.snap._replace(effects=False)
     c = controls(audio, mod)
-    assert c[4]['value'] == 'headphones' and c[4]['detail'] == 'm50x'
+    assert c[4]['value'] == 'EasyEffects' and c[4]['detail'] == 'bypassed'
 
 
 def test_a_muted_sub_says_how_to_get_it_back(audio, mod):
     audio.machine.snap = audio.machine.snap._replace(sub=(0,) * 10)
     c = controls(audio, mod)
-    assert (c[3]['value'], c[3]['detail']) == ('muted', 'press to unmute')
+    assert (c[3]['value'], c[3]['detail']) == ('sub', 'press to unmute')
 
 
 def test_an_output_that_is_not_there_says_so(audio, mod):
+    """Still by name -- the colour going dark is the missing part."""
     audio.machine.snap = audio.machine.snap._replace(sinks=(), sink='')
     c = controls(audio, mod)
-    assert c[0]['value'] == 'gone' and c[1]['value'] == 'gone'
+    assert c[0]['value'] == mod.GAME_SINK and c[0]['detail'] == 'not connected'
+    assert c[0]['colour'] == mod.HEX[mod.OFF]
 
 
 def test_the_control_colours_are_the_ones_on_the_pads(audio, mod):
@@ -217,11 +246,15 @@ def test_a_control_changing_reaches_the_open_window(audio, mod):
     """Press headset on the board and the window still said speakers: it was
     sent once, when it opened."""
     audio.toggle_window()
+    was = {col: cell['colour'] for (r, col), cell in cells(mod).items()
+           if r == mod.CTRL_ROW}
     audio.machine.snap = audio.machine.snap._replace(
         sink='alsa_input.AT_ATH-M50xSTS')
     audio.render_machine()
-    c = {col: cell for (r, col), cell in cells(mod).items() if r == mod.CTRL_ROW}
-    assert c[1]['value'] == 'in use' and c[0]['value'] == 'ready'
+    now = {col: cell['colour'] for (r, col), cell in cells(mod).items()
+           if r == mod.CTRL_ROW}
+    assert was[0] == mod.HEX[mod.SELECTED] and now[0] == mod.HEX[mod.WHITE]
+    assert now[1] == mod.HEX[mod.SELECTED], 'the headset is the one in use now'
 
 
 def test_a_closed_window_is_not_written_to(audio, mod):

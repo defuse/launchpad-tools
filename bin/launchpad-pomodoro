@@ -1818,39 +1818,38 @@ class Board:
         return PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE
 
     def control_cell(self, b, snap):
-        """One control pad in words: what it is, what it is doing, what a press
-        would do about it. (name, value, detail), or None for the gap.
+        """One control pad in words: what it is, and what a press would do
+        about it. (name, value, detail), or None for the gap.
 
-        For the window. The colour still comes from control_colour, so this
-        says what a colour cannot rather than saying the same thing twice.
+        The cell says what the button IS -- the sink's own name, `sub`,
+        `EasyEffects`, a transport icon -- and its state is the colour, which
+        is the pad's colour, from control_colour. A cell that also spelled the
+        state out would be saying the same thing twice and could disagree with
+        itself. The name line stays empty here for the same reason: a readout
+        row needs one because a temperature does not say which drive it is
+        from, and `game_stereo` needs no label saying `speakers`.
+
+        The detail line is what pressing would do, and only appears when there
+        is something to do -- the output you are already on says nothing.
         """
         if b is None:
             return None
         if b.kind == 'sink':
-            name = 'headset' if b.arg == HEADSET else 'speakers'
             found = match(b.arg, snap.sinks)
             if not found:
-                return (name, 'gone', 'not connected')
-            if found == snap.sink:
-                return (name, 'in use', 'everything comes out here')
-            return (name, 'ready', 'press to switch to it')
+                return ('', b.arg, 'not connected')
+            return ('', b.arg, '' if found == snap.sink else 'press to switch to it')
         if b.kind == 'sub':
             if not snap.sub:
-                return ('sub', 'gone', 'no interface')
-            muted = sub_muted(snap.sub)
-            return ('sub', 'muted' if muted else 'on',
-                    'press to unmute' if muted else 'press to mute')
+                return ('', 'sub', 'no interface')
+            return ('', 'sub',
+                    'press to unmute' if sub_muted(snap.sub) else 'press to mute')
         if b.kind == 'effects':
-            if not snap.effects:
-                return ('effects', 'off', 'press to turn on')
-            # the preset by name, since which one is loaded is the thing the
-            # colour is only hinting at
-            which = 'headphones' if snap.preset == snap.headset_preset else 'speakers'
-            return ('effects', which, snap.preset or '')
-        if b.arg == 'PlayPause':
-            return ('play / pause', 'playing' if snap.playing else 'paused', 'spotify')
-        back = b.arg == 'Previous'
-        return ('previous' if back else 'next', '⏮' if back else '⏭', 'spotify')
+            # the preset by name: which one is loaded is the thing the colour
+            # is only hinting at, and the names are yours to change
+            return ('', 'EasyEffects',
+                    snap.preset or '' if snap.effects else 'bypassed')
+        return ('', {'Previous': '⏮', 'PlayPause': '⏯'}.get(b.arg, '⏭'), '')
 
     def control_press(self, row, col):
         """Act on a control pad.
