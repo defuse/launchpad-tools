@@ -85,6 +85,50 @@ def test_hide_withdraws_it(grid):
     assert grid.focus_rc is None
 
 
+# ---- the control row -----------------------------------------------------
+
+CONTROLS = [{'r': 7, 'c': 0, 'name': 'speakers', 'value': 'in use',
+             'detail': 'everything comes out here', 'colour': '#5a7bff'},
+            {'r': 7, 'c': 1, 'name': 'headset', 'value': 'ready',
+             'detail': 'press to switch to it', 'colour': '#e8e8e8'},
+            {'r': 7, 'c': 4, 'name': 'effects', 'value': 'headphones',
+             'detail': 'm50x', 'colour': '#ff8c1a'}]
+
+
+def test_the_buttons_are_a_row_of_the_window(grid):
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    assert grid.values[(7, 0)].cget('text') == 'in use'
+    assert grid.names[(7, 4)].cget('text') == 'effects'
+    assert grid.details[(7, 4)].cget('text') == 'm50x'
+    assert grid.values[(7, 4)].cget('fg') == '#ff8c1a'
+
+
+def test_the_row_is_named_in_the_gap_between_the_buttons(grid):
+    """The gap in the middle of the control row is where the title goes -- the
+    same rule as the readouts, which are centred and leave one."""
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    assert grid.titles[(7, 2)].cget('text') == 'controls'
+    assert grid.titles[(7, 0)].cget('text') == ''
+
+
+def test_the_blank_row_is_blank(grid):
+    """Row 6 is dark on the board. It is the gap between what the tab reports
+    and what it does, and it is a gap here too rather than a row of cells."""
+    assert (6, 0) not in grid.frames
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    assert grid.root.state() != 'withdrawn'
+
+
+def test_nothing_in_the_window_is_clickable(grid):
+    """It is a readout. A second set of handlers for the same eight buttons is
+    a second set to keep right, and the pads are where you press."""
+    say(grid, 'data\t' + json.dumps(CELLS + CONTROLS), 'show\t2\t1')
+    for (r, c), f in grid.frames.items():
+        assert not f.bind('<Button-1>'), f'cell {r},{c} answers a click'
+        for w in f.winfo_children():
+            assert not w.bind('<Button-1>')
+
+
 @pytest.mark.parametrize('line', ['', 'data', 'show', 'show\t2', 'nonsense',
                                   'data\tnot json', 'hide\textra'])
 def test_a_bad_line_does_not_kill_it(grid, line):

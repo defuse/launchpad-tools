@@ -387,8 +387,12 @@ TEMP_OK = (80, 110, 127)
 # The pads speak in palette indices; the window needs CSS. Only the colours
 # these four rows can actually show are here -- anything else is a bug rather
 # than a missing entry, and shows up as the fallback grey.
+# The machine window's palette: what a cell's reading is printed in. The last
+# three are the control row -- white for a control that is there and idle, blue
+# for the output you are on, sky for a transport that is playing.
 HEX = {OFF: '#20202a', GREEN: '#33d17a', YELLOW: '#ffd21a', RED: '#ff4444',
-       ORANGE: '#ff8c1a', TEMP_OK: '#a0d8ff'}
+       ORANGE: '#ff8c1a', TEMP_OK: '#a0d8ff',
+       WHITE: '#e8e8e8', BLUE: '#5a7bff', SKY: '#7fd3ff'}
 
 SENSORS = (
     Sensor('cpu',  70, 85,  95, 'k10temp', 'Tctl'),
@@ -1158,6 +1162,7 @@ class Board:
         self._hold_count = {}                  # note -> cycles already fired while held
         self._popup = None                     # resident peek window (daemon)
         self._machine_popup = None             # ...and the machine one
+        self._machine_sent = None              # the last frame it was given
         self._pomo_popup = None                # ...and the pomodoro one
         self._pomo_sent = None                 # the last frame it was sent
         self._peeking = False                  # a pad is being held for a look
@@ -1203,6 +1208,9 @@ class Board:
             try:
                 env = dict(os.environ)
                 env.setdefault('DISPLAY', ':0')
+                # a new process knows nothing, so the frame it was sent before
+                # does not count as sent any more
+                self._machine_sent = None
                 self._machine_popup = subprocess.Popen(
                     [MACHINE_POPUP], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                     text=True, env=env, bufsize=1)
@@ -1635,11 +1643,37 @@ class Board:
             add(TEMP_ROW, first + i, sensor.name,
                 '--' if t is None else f'{t:.0f}C',
                 self.temp_colour(t, (sensor.warm, sensor.hot, sensor.panic)))
+
+        # the control row, which is the one row of this tab you press. Nothing
+        # here is clickable: the window is a readout, and a second set of
+        # handlers for the same eight buttons is a second set to keep right
+        for c, b in enumerate(CONTROLS[CTRL_ROW]):
+            words = self.control_cell(b, snap)
+            if words:
+                add(CTRL_ROW, c, words[0], words[1],
+                    self.control_colour(b, snap), words[2])
         return cells
+
+    def _machine_send(self):
+        """Push what the rows are showing, if it has changed since last time.
+
+        The window is resident and keeps the last frame it was given, so an
+        unchanged one is nothing to send. It does have to be sent again when
+        something moves, though: the control row changes under an open window
+        every time a pad switches the output or mutes the sub, and a window
+        describing the state before that is worse than no window.
+        """
+        blob = json.dumps(self.machine_cells(self.machine.snap))
+        if blob != self._machine_sent:
+            # recorded after the write, not before: sending is what starts the
+            # process when there is none, and starting one forgets what the
+            # last one was told
+            self._machine_cmd('data\t' + blob)
+            self._machine_sent = blob
 
     def machine_peek(self, row, col):
         """Show the window for as long as the pad is held."""
-        self._machine_cmd('data\t' + json.dumps(self.machine_cells(self.machine.snap)))
+        self._machine_send()
         self._machine_cmd(f'show\t{row}\t{col}')
         self._peeking = True
 
@@ -1660,6 +1694,8 @@ class Board:
         for r in MACH_BLANK:                   # reserved, and drawn dark so a
             for c in range(CELLS):             # tab switch cannot leave the
                 self.set(pad(r, c), OFF)       # previous tab's colours behind
+        if self._window == M_MACH or self._peeking:
+            self._machine_send()               # keep an open window current
 
     def alarm(self, p, colour=RED):
         """The strobe kept for things that are actually wrong."""
@@ -1780,6 +1816,41 @@ class Board:
                 return PRESET_HEADSET
             return PRESET_MAIN
         return PLAYING if b.arg == 'PlayPause' and snap.playing else WHITE
+
+    def control_cell(self, b, snap):
+        """One control pad in words: what it is, what it is doing, what a press
+        would do about it. (name, value, detail), or None for the gap.
+
+        For the window. The colour still comes from control_colour, so this
+        says what a colour cannot rather than saying the same thing twice.
+        """
+        if b is None:
+            return None
+        if b.kind == 'sink':
+            name = 'headset' if b.arg == HEADSET else 'speakers'
+            found = match(b.arg, snap.sinks)
+            if not found:
+                return (name, 'gone', 'not connected')
+            if found == snap.sink:
+                return (name, 'in use', 'everything comes out here')
+            return (name, 'ready', 'press to switch to it')
+        if b.kind == 'sub':
+            if not snap.sub:
+                return ('sub', 'gone', 'no interface')
+            muted = sub_muted(snap.sub)
+            return ('sub', 'muted' if muted else 'on',
+                    'press to unmute' if muted else 'press to mute')
+        if b.kind == 'effects':
+            if not snap.effects:
+                return ('effects', 'off', 'press to turn on')
+            # the preset by name, since which one is loaded is the thing the
+            # colour is only hinting at
+            which = 'headphones' if snap.preset == snap.headset_preset else 'speakers'
+            return ('effects', which, snap.preset or '')
+        if b.arg == 'PlayPause':
+            return ('play / pause', 'playing' if snap.playing else 'paused', 'spotify')
+        back = b.arg == 'Previous'
+        return ('previous' if back else 'next', '⏮' if back else '⏭', 'spotify')
 
     def control_press(self, row, col):
         """Act on a control pad.
@@ -2147,7 +2218,7 @@ class Board:
             self._pomo_cmd('show')
             return
         elif self.mode == M_MACH:
-            self._machine_cmd('data\t' + json.dumps(self.machine_cells(self.machine.snap)))
+            self._machine_send()
             self._machine_cmd(f'show\t{DISK_ROW}\t{centred(len(self.machine.snap.disks))}')
         else:
             return                               # nothing to show for a meter

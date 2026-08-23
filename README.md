@@ -177,8 +177,16 @@ Everything above the bottom row is read-only:
 **Hold any of those four pads** and a window appears for as long as you hold
 it, laid out as the same grid: the same rows in the same columns, with the held
 cell outlined. It carries what a colour cannot — which drive, how many degrees,
-how many gigabytes and what share of the volume that is. It is a readout, not a
-control; releasing the pad closes it.
+how many gigabytes and what share of the volume that is. Releasing the pad
+closes it; tapping the red pad opens the same window and leaves it open.
+
+The control row is in that window too, along the bottom where it is on the
+board, each button saying what it is, what it is doing and what pressing it
+would do — `sub / on / press to mute`, `effects / headphones / m50x`. Nothing in
+the window is clickable: it is a readout, the pads are where you press, and a
+second set of handlers for the same eight buttons is a second set to keep right.
+An open window is kept current, since the row changes under it every time a pad
+switches the output or mutes the sub.
 
 Rows 2 and 4 are the same six drives in the same order, so a column is one
 drive: its array state above, its temperature below. Drive temperatures need
@@ -359,7 +367,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 658 tests, about forty-five seconds
+tests/run-tests             # 673 tests, about forty-five seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

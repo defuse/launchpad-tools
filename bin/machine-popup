@@ -4,13 +4,18 @@
 """
 Machine grid window for the Launchpad machine tab.
 
-Mirrors the four read-only rows of that tab -- disks, filesystems, drive
-temperatures, system temperatures -- in the same eight columns, so a pad on the
-board and a cell on screen are the same thing in the same place. Held open only
-while a pad is held: the board sends show on the press and hide on the release.
+Mirrors the rows of that tab -- disks, filesystems, drive temperatures, system
+temperatures, and the control row along the bottom -- in the same eight columns,
+so a pad on the board and a cell on screen are the same thing in the same place.
+Opened by the red pad, or held open while a readout pad is held: the board sends
+show on the press and hide on the release.
 
 The pads say green or yellow or red. This says 37C, or 812 GB, or that sdb is
-the drive in question, which is the part a colour cannot carry.
+the drive in question, which is the part a colour cannot carry. For the control
+row it says what the button is, what it is doing, and what pressing it would do
+-- the pads are still where you press. Nothing here is clickable: this is a
+readout, and a second set of handlers for the same eight buttons is a second set
+to keep right.
 
 stdin:   data <json>   the cells: [{r, c, name, value, colour}, ...]
          show R C      display, with that cell outlined
@@ -24,12 +29,19 @@ down.
 import sys, json, re, subprocess, threading, queue
 import tkinter as tk
 
-ROWS = (2, 3, 4, 5)                        # the machine tab's read-only rows
+# every row of the machine tab that has something on it. 6 is blank on the
+# board and blank here: it is the gap between what the tab reports and what it
+# does, and the window is a map of the tab
+ROWS = (2, 3, 4, 5, 6, 7)
+GAP_ROWS = (6,)
+CTRL_ROW = 7                               # the one row of the tab you press
 COLS = 8
 BG, CELL_BG, MUTED = '#0d0d11', '#191920', '#5a5a66'
 YELLOW_B = '#ffd21a'                       # the held cell, as in habit-popup
-TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps'}
-CELL_H = 240                               # a row's height; the grid centres
+TITLES = {2: 'disks', 3: 'filesystems', 4: 'drive temps', 5: 'system temps',
+          7: 'controls'}
+CELL_H = 210                               # a row's height; the grid centres
+GAP_H = 44                                 # ...and a blank row's
 
 
 def g9_centre_box():
@@ -82,6 +94,9 @@ class Grid:
         self.frames, self.names, self.values = {}, {}, {}
         self.details, self.titles = {}, {}
         for i, r in enumerate(ROWS):
+            if r in GAP_ROWS:                  # a blank row is a blank row
+                outer.grid_rowconfigure(i, weight=0, minsize=GAP_H)
+                continue
             outer.grid_rowconfigure(i, weight=0, minsize=CELL_H)
             for c in range(COLS):
                 outer.grid_columnconfigure(c, weight=1)
@@ -95,10 +110,13 @@ class Grid:
                              bg=CELL_BG, anchor='w', justify='left')
                 n.pack(anchor='nw', padx=10, pady=(6, 0), fill='x')
                 self.names[(r, c)] = n
-                # the reading itself, and under it the part that qualifies it
+                # the reading itself, and under it the part that qualifies it.
+                # A control's reading is a word rather than a number -- 'in
+                # use', 'headphones' -- so it is set smaller to fit the cell
                 mid = tk.Frame(f, bg=CELL_BG)
                 mid.pack(expand=True)
-                v = tk.Label(mid, text='', font=('DejaVu Sans', 34, 'bold'),
+                v = tk.Label(mid, text='',
+                             font=('DejaVu Sans', 26 if r == CTRL_ROW else 34, 'bold'),
                              fg=MUTED, bg=CELL_BG)
                 v.pack()
                 self.values[(r, c)] = v
@@ -145,6 +163,8 @@ class Grid:
     # ---- painting --------------------------------------------------------
     def paint(self):
         for r in ROWS:
+            if r in GAP_ROWS:
+                continue
             # the row's name goes in the empty cell to the left of its readings
             # -- the rows are centred, so there is one, and a cell that holds a
             # reading has its own name to carry

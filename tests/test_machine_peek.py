@@ -28,7 +28,8 @@ def window(mod):
 
 
 def cells(mod):
-    for line in window(mod):
+    """The LAST frame the window was given -- what it is showing now."""
+    for line in reversed(window(mod)):
         if line.startswith('data\t'):
             return {(c['r'], c['c']): c for c in json.loads(line.split('\t', 1)[1])}
     return {}
@@ -123,3 +124,117 @@ def test_a_cell_with_no_reading_says_so(mach, mod):
     c = cells(mod)
     assert c[(mod.DRIVE_TEMP_ROW, mod.centred(3))]['value'] == '--'
     assert c[(mod.TEMP_ROW, mod.centred(1))]['value'] == '--'
+
+
+# ---- the control row, said in words --------------------------------------
+
+@pytest.fixture
+def audio(mach, mod):
+    """A machine with both outputs present, listening on the speakers, sub
+    passing, effects on with the room's preset, and Spotify paused."""
+    mach.machine.snap = mach.machine.snap._replace(
+        sinks=('alsa_output.game_stereo', 'alsa_input.AT_ATH-M50xSTS'),
+        sources=('alsa_input.AT_ATH-M50xSTS',),
+        sink='alsa_output.game_stereo',
+        sub=(52016,) * 10, running=True, effects=True,
+        preset='room', headset_preset='m50x')
+    return mach
+
+
+def controls(mach, mod):
+    mach.toggle_window()
+    return {c: cell for (r, c), cell in cells(mod).items() if r == mod.CTRL_ROW}
+
+
+def test_every_button_is_in_the_window_and_the_gap_is_not(audio, mod):
+    """The gap is a deliberate hole in the row, and a cell there would invite
+    a press that fires nothing."""
+    got = controls(audio, mod)
+    want = [c for c, b in enumerate(mod.CONTROLS[mod.CTRL_ROW]) if b is not None]
+    assert sorted(got) == want
+
+
+def test_a_button_says_what_it_is_and_what_it_is_doing(audio, mod):
+    c = controls(audio, mod)
+    assert (c[0]['name'], c[0]['value']) == ('speakers', 'in use')
+    assert (c[1]['name'], c[1]['value']) == ('headset', 'ready')
+    assert c[1]['detail'] == 'press to switch to it'
+    assert (c[3]['name'], c[3]['value']) == ('sub', 'on')
+    assert c[3]['detail'] == 'press to mute'
+    assert (c[4]['name'], c[4]['value']) == ('effects', 'speakers')
+    assert c[4]['detail'] == 'room', 'the preset by name'
+    assert (c[6]['name'], c[6]['value']) == ('play / pause', 'paused')
+
+
+def test_the_headphone_preset_is_named_as_such(audio, mod):
+    audio.machine.snap = audio.machine.snap._replace(preset='m50x')
+    c = controls(audio, mod)
+    assert c[4]['value'] == 'headphones' and c[4]['detail'] == 'm50x'
+
+
+def test_a_muted_sub_says_how_to_get_it_back(audio, mod):
+    audio.machine.snap = audio.machine.snap._replace(sub=(0,) * 10)
+    c = controls(audio, mod)
+    assert (c[3]['value'], c[3]['detail']) == ('muted', 'press to unmute')
+
+
+def test_an_output_that_is_not_there_says_so(audio, mod):
+    audio.machine.snap = audio.machine.snap._replace(sinks=(), sink='')
+    c = controls(audio, mod)
+    assert c[0]['value'] == 'gone' and c[1]['value'] == 'gone'
+
+
+def test_the_control_colours_are_the_ones_on_the_pads(audio, mod):
+    """Same rule for the window as for the readouts: it has to agree with what
+    you are looking at, so the colour comes from the function that lights the
+    pad rather than from a second copy of the rules."""
+    c = controls(audio, mod)
+    for col, b in enumerate(mod.CONTROLS[mod.CTRL_ROW]):
+        if b is not None:
+            assert c[col]['colour'] == mod.HEX[audio.control_colour(b, audio.machine.snap)]
+
+
+def test_every_colour_a_control_can_take_has_a_hex(mod):
+    """A colour missing from that table arrives as the fallback grey, which is
+    the window quietly disagreeing with the board."""
+    for colour in (mod.SELECTED, mod.SUB_ON, mod.SUB_MUTE, mod.PLAYING,
+                   mod.WHITE, mod.OFF, mod.PRESET_OFF, mod.PRESET_MAIN,
+                   mod.PRESET_HEADSET):
+        assert colour in mod.HEX
+
+
+# ---- an open window is kept current --------------------------------------
+
+def test_an_unchanged_frame_is_not_sent_twice(audio, mod):
+    audio.toggle_window()
+    before = len([l for l in window(mod) if l.startswith('data\t')])
+    audio.render_machine()
+    audio.render_machine()
+    assert len([l for l in window(mod) if l.startswith('data\t')]) == before
+
+
+def test_a_control_changing_reaches_the_open_window(audio, mod):
+    """Press headset on the board and the window still said speakers: it was
+    sent once, when it opened."""
+    audio.toggle_window()
+    audio.machine.snap = audio.machine.snap._replace(
+        sink='alsa_input.AT_ATH-M50xSTS')
+    audio.render_machine()
+    c = {col: cell for (r, col), cell in cells(mod).items() if r == mod.CTRL_ROW}
+    assert c[1]['value'] == 'in use' and c[0]['value'] == 'ready'
+
+
+def test_a_closed_window_is_not_written_to(audio, mod):
+    audio.render_machine()
+    assert not [l for l in window(mod) if l.startswith('data\t')]
+
+
+def test_a_respawned_window_is_told_everything_again(audio, mod):
+    """It is a new process: whatever the last one was sent, it does not know."""
+    audio.toggle_window()
+    for p in FakePopen.instances:
+        if 'machine-popup' in p.argv[0]:
+            p.alive = False
+    audio.render_machine()
+    fresh = [p for p in FakePopen.instances if 'machine-popup' in p.argv[0]][-1]
+    assert any(l.startswith('data\t') for l in fresh.sent())
