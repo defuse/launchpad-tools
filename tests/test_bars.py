@@ -63,8 +63,8 @@ def test_week_bar_counts_down_to_sunday(mod):
     (22, 59, 'RED',    0),
     (23, 0,  'YELLOW', 3.3),            # heads-up: half the rate, same dark gap
     (23, 29, 'YELLOW', 3.3),
-    (23, 30, 'RED',    1.8),            # pomodoro cadence
-    (23, 39, 'RED',    1.8),
+    (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
+    (23, 39, 'ORANGE', 1.8),
     (23, 40, 'RED',    0.9),            # twice that
     (23, 49, 'RED',    0.9),
     (23, 50, 'RED',    0.3),            # rapid
@@ -83,6 +83,13 @@ def test_slowing_the_blink_lengthens_the_lit_chunk_not_the_gap(mod):
     fits = [st for st in mod.BAR_STAGES if st.on + st.off >= 1.8]
     assert {st.off for st in fits} == {mod.FLASH_OFF}
     assert all(st.off <= mod.FLASH_OFF for st in mod.BAR_STAGES)
+
+
+def test_the_last_hour_warms_from_yellow_to_red(mod):
+    """Colour escalates with the rate, so the bar reads at a glance and from
+    the corner of an eye both."""
+    assert [st.colour for st in mod.BAR_STAGES] == \
+        [mod.RED, mod.RED, mod.ORANGE, mod.YELLOW]      # shortest-remaining first
 
 
 def test_each_stage_blinks_faster_than_the_one_before(mod):
@@ -159,7 +166,7 @@ def test_the_daily_bar_blinks_yellow_in_the_first_half_of_the_last_hour(mod, out
     assert paint(mod, out, when(base, stage, False)) == [mod.YELLOW] * 8
 
 
-def test_the_daily_bar_blinks_red_once_the_last_half_hour_starts(mod, out):
+def test_the_daily_bar_blinks_red_once_the_last_twenty_minutes_start(mod, out):
     base = at(2026, 8, 18, 23, 45)
     stage = mod.DAY.stage(mod.DAY.bar(base)[1])
     assert paint(mod, out, when(base, stage, True)) == [mod.OFF] * 8

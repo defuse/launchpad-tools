@@ -84,7 +84,7 @@ The daily one then spends the last hour counting itself down:
 | | |
 |---|---|
 | 23:00 | yellow, blinking at half the pomodoro rate |
-| 23:30 | red, pomodoro cadence |
+| 23:30 | orange, pomodoro cadence |
 | 23:40 | red, twice that |
 | 23:50 | red, rapid |
 

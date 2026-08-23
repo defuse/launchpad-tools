@@ -24,8 +24,8 @@ period: the daily tab shows the day, the weekly one shows the week, a pad per
 day. A cell lights as its slice STARTS, so a full bar means you are inside the
 last slice -- the weekly bar turns pink for Saturday, and the daily one goes
 red for its final three hours, then spends the last hour counting itself down:
-yellow blinking slowly from 23:00, red at the pomodoro cadence from 23:30,
-twice that from 23:40, rapid from 23:50.
+yellow blinking slowly from 23:00, orange at the pomodoro cadence from 23:30,
+red at twice that from 23:40, and rapid red from 23:50.
 
 A pomodoro row, left to right, is its own progress bar:
 
@@ -176,9 +176,10 @@ class Stage(NamedTuple):
     off:    float                      # seconds dark; 0 means solid
 
 
-# A full bar is red and still. Through the final hour it starts saying so: a
-# slow yellow blink first, which reads as a heads-up rather than more of the
-# same red, then red blinking harder every ten minutes.
+# A full bar is red and still. Through the final hour it starts saying so, and
+# warms as it goes: a slow yellow blink is a heads-up, orange means the half
+# hour is gone, red means minutes. Colour and rate escalate together, so the
+# bar is readable at a glance and from the corner of an eye both.
 #
 # Changing the rate lengthens or shortens the LIT chunk; the dark one stays at
 # FLASH_OFF. A gap that grows with the period stops reading as a blink and
@@ -189,7 +190,7 @@ class Stage(NamedTuple):
 BAR_STAGES = (
     Stage(10 * 60, RED,    0.15, 0.15),                    # 23:50: rapid
     Stage(20 * 60, RED,    FLASH_ON / 2, FLASH_OFF / 2),   # 23:40: twice pomodoro
-    Stage(30 * 60, RED,    FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
+    Stage(30 * 60, ORANGE, FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
     Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
 )
 
