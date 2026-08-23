@@ -223,3 +223,34 @@ def test_the_row_name_is_not_clipped(win):
     import tkinter.font as tkfont
     wide = tkfont.Font(root=win.root, font=label.cget('font')).measure(label.cget('text'))
     assert label.winfo_reqwidth() >= wide
+
+
+def test_only_the_header_answers_to_a_click(win):
+    """The margin around the text box is where a hand lands reaching for it.
+    Cycling the state from there is a state change nobody asked for."""
+    load(win, rows=ROWS_ONE)
+    assert not win.slots[0].bind('<Button-1>'), 'the slot frame is not a button'
+    assert win.heads[0].bind('<Button-1>'), 'its header is'
+
+
+def test_the_state_colour_still_reaches_the_grip(win):
+    """It sits one level deeper now, inside the header."""
+    load(win, names=['x'] * 8, rows=ROWS_ONE)
+    win.todo[0]['state'] = 2
+    win.paint()
+    win.root.update()
+    bg = win.mod.STATE_BG[2]
+    grip = win.heads[0].winfo_children()[0]
+    assert win.slots[0].cget('bg') == bg
+    assert win.heads[0].cget('bg') == bg
+    assert grip.cget('bg') == bg
+
+
+def test_clicking_the_header_still_presses(win, capsys):
+    load(win, rows=ROWS_ONE)
+    capsys.readouterr()
+    win.heads[3].event_generate('<Button-1>', x=40, y=4)
+    win.heads[3].event_generate('<ButtonRelease-1>', x=40, y=4)
+    win.root.update()
+    out = capsys.readouterr().out
+    assert f'press\t{win.mod.TODO_ROW}\t3' in out

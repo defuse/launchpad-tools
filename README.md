@@ -104,9 +104,10 @@ its length.
 **Switching tabs switches the window.** Whatever was on screen closes and the
 new tab's window opens in its place — or nothing does, on a tab that has none.
 
-The todo list is edited here — type a name, click a slot to cycle its state,
-drag a slot by its handle to move it (dragging inside the text box selects
-text, and moves nothing). The name boxes wrap like a text editor and every one of
+The todo list is edited here — type a name, click a slot's header to cycle its
+state, drag it by that header to move it. The text box and the margin around it
+take no gesture at all, so reaching for the box never changes a state and
+selecting a name never reorders the list. The name boxes wrap like a text editor and every one of
 them is as tall as the longest item needs, so nothing scrolls and nothing is
 hidden. A drag is a *move*, not a swap: everything between the slot
 and where it lands shifts by one, in whichever direction that turns out to be,
@@ -343,7 +344,7 @@ is. Delete the file to start over.
 ## Tests
 
 ```sh
-tests/run-tests             # 491 tests, about fifteen seconds
+tests/run-tests             # 494 tests, about fifteen seconds
 tests/run-tests -k break    # pytest args pass through
 ```
 

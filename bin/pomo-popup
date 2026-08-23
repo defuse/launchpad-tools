@@ -78,6 +78,14 @@ def g9_centre_box():
         return 1600, 900, 100, 100
 
 
+def tint(w, bg):
+    """Paint a slot and everything in it. The state colour is the whole cell,
+    and the tree under it is two deep now that the grip lives in a header."""
+    w.configure(bg=bg)
+    for child in w.winfo_children():
+        tint(child, bg)
+
+
 def say(line):
     sys.stdout.write(line + '\n')
     sys.stdout.flush()
@@ -110,7 +118,7 @@ class Window:
         self.outer = outer
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
         self.row_lefts = {}
-        self.slots, self.entries = {}, {}
+        self.slots, self.entries, self.heads = {}, {}, {}
         self.root.bind_all('<Escape>', lambda ev: (self.close(), 'break')[1])
         self.root.withdraw()
 
@@ -151,7 +159,7 @@ class Window:
             child.destroy()
         self.row_frames, self.row_pads, self.row_hints, self.row_names = {}, {}, {}, {}
         self.row_lefts = {}
-        self.slots, self.entries = {}, {}
+        self.slots, self.entries, self.heads = {}, {}, {}
 
         self._built = True
         line = 0
@@ -203,9 +211,16 @@ class Window:
                          highlightthickness=4, highlightbackground=BG)
             f.grid(row=line, column=2 + c, padx=4, pady=4, sticky='nsew')
             self.slots[c] = f
-            handle = tk.Label(f, text='⠿', font=('DejaVu Sans', 13), fg=MUTED,
+            # the header: the strip along the top carrying the grip, and the
+            # only part of a slot that answers to a click. The frame itself
+            # does not, or the few pixels of margin around the text box -- the
+            # ones a hand lands on reaching for it -- would cycle the state
+            head = tk.Frame(f, bg=CELL_BG, cursor='fleur')
+            head.pack(fill='x')
+            handle = tk.Label(head, text='⠿', font=('DejaVu Sans', 13), fg=MUTED,
                               bg=CELL_BG, cursor='fleur')
             handle.pack(anchor='nw', padx=8, pady=(4, 0))
+            self.heads[c] = head
             # a Text, not an Entry: an Entry is one line and scrolls sideways,
             # which hides the end of anything that does not fit
             e = tk.Text(f, font=MONO, bg=CELL_BG, fg=WHITE,
@@ -218,11 +233,11 @@ class Window:
             # a name is one line of text; the box is multiline so it can wrap,
             # not so it can hold paragraphs, and the protocol is line based
             e.bind('<Return>', lambda ev: 'break')
-            # The frame and the handle are the pad; the entry is the text box
-            # and takes no gesture at all. Dragging inside it is selecting
-            # text, and a drag that started there used to move the item
-            # instead, which loses both the selection and the order.
-            for w in (f, handle):
+            # The header is the pad; the text box and the margins around it
+            # are not. Dragging inside the box is selecting text, and a drag
+            # that started there used to move the item instead, which loses
+            # both the selection and the order.
+            for w in (head, handle):
                 w.bind('<Button-1>', lambda ev, col=c: self.grab(col, ev), add='+')
                 w.bind('<B1-Motion>', lambda ev, col=c: self.drag(ev, col), add='+')
                 w.bind('<ButtonRelease-1>', lambda ev, col=c: self.drop(ev), add='+')
@@ -247,9 +262,7 @@ class Window:
             for c in range(COLS):
                 slot = self.todo[c]
                 bg = STATE_BG.get(slot.get('state', 0), CELL_BG)
-                self.slots[c].configure(bg=bg)
-                for w in self.slots[c].winfo_children():
-                    w.configure(bg=bg)
+                tint(self.slots[c], bg)
                 box = self.entries[c]
                 # never rewrite the box with the cursor in it: the board echoes
                 # a normalised name back, and replacing the text underneath a
