@@ -100,12 +100,20 @@ def test_the_evening_warms_from_gold_to_red(mod):
         'a bar with hours to run must not wear an escalation colour'
 
 
-def test_gold_is_dimmer_and_yellower_than_the_yellow_after_it(mod):
-    """The evening warms into the last hour. Gold brighter than that yellow
-    would be a step back at 23:00, when the thing actually gets urgent."""
+def test_gold_is_under_the_yellow_after_it_in_every_channel(mod):
+    """23:00 has to be a step up in brightness as well as in rate. Gold as
+    bright as that yellow would leave the blink doing all the work."""
     r, g, b = mod.GOLD
     yr, yg, yb = 127, 105, 13                       # palette 13, in 7-bit terms
     assert b < yb and r < yr and g < yg
+
+
+def test_gold_keeps_its_green_well_under_its_red(mod):
+    """Hue is most sensitive to that ratio where the two are close, which is
+    where the pads' own LED variation shows as a visible difference in colour
+    from one cell to the next."""
+    r, g, b = mod.GOLD
+    assert g < r * 0.75 and b == 0
 
 
 def test_each_stage_blinks_faster_than_the_one_before(mod):

@@ -111,9 +111,14 @@ OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
 TODO_DONE = (6, 92, 6)
 YELLOW, CYAN = 13, 33
 # The evening's gold. Sent as RGB: the palette's yellows are all brighter than
-# this, and it has to sit below the yellow the last hour starts on -- the bar
-# warms all evening and must never step back to a cooler colour.
-GOLD = (105, 85, 0)
+# this, and it has to stay under the yellow the last hour starts on -- every
+# channel below it, so 23:00 is a step up in brightness as well as in rate.
+#
+# Green is held well under red rather than near it. Hue is most sensitive to
+# the red/green ratio where the two are close, which is where the pads' own
+# LED-to-LED variation shows as a visible difference in colour across the row;
+# further into the amber it is the same variation and much less of a shift.
+GOLD = (110, 74, 0)
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
 # mode row: one colour per mode; the SELECTED mode shows white instead
@@ -150,7 +155,7 @@ PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
            # shows today -- but a bar's colour missing from here comes out as
            # an unlit cell, which is the window disagreeing with the board
            YELLOW: '#ffd21a', ORANGE: '#ff8b1f', PURPLE: '#9d5cff',
-           PINK: '#ff6fae', GOLD: '#d3ab00'}
+           PINK: '#ff6fae', GOLD: '#dd9500'}
 
 # ---- layout ---------------------------------------------------------------
 # Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
