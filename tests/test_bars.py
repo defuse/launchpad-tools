@@ -61,9 +61,11 @@ def test_week_bar_counts_down_to_sunday(mod):
 @pytest.mark.parametrize('h,mi,colour,period', [
     (19, 59, 'BLUE',   0),              # the day is still the day
     (20, 0,  'GOLD',   0),              # evening: gold, holding still
-    (21, 59, 'GOLD',   0),
-    (22, 0,  'GOLD',   6.3),            # ...and now the slowest blink there is
-    (22, 59, 'GOLD',   6.3),
+    (20, 59, 'GOLD',   0),
+    (21, 0,  'DEEP_GOLD', 0),           # deeper once the bar fills
+    (21, 59, 'DEEP_GOLD', 0),
+    (22, 0,  'DEEP_GOLD', 6.3),         # ...and now the slowest blink there is
+    (22, 59, 'DEEP_GOLD', 6.3),
     (23, 0,  'YELLOW', 3.3),            # heads-up: half that rate again
     (23, 29, 'YELLOW', 3.3),
     (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
@@ -95,7 +97,8 @@ def test_the_evening_warms_from_gold_to_red(mod):
     """Colour escalates with the rate, so the bar reads at a glance and from
     the corner of an eye both -- and never doubles back to a cooler colour."""
     assert [st.colour for st in mod.BAR_STAGES] == \
-        [mod.RED, mod.RED, mod.RED, mod.ORANGE, mod.YELLOW, mod.GOLD, mod.GOLD]
+        [mod.RED, mod.RED, mod.RED, mod.ORANGE, mod.YELLOW,
+         mod.DEEP_GOLD, mod.DEEP_GOLD, mod.GOLD]
     assert mod.DAY.colour not in [st.colour for st in mod.BAR_STAGES], \
         'a bar with hours to run must not wear an escalation colour'
 
@@ -106,6 +109,17 @@ def test_gold_is_under_the_yellow_after_it_in_every_channel(mod):
     r, g, b = mod.GOLD
     yr, yg, yb = 127, 105, 13                       # palette 13, in 7-bit terms
     assert b < yb and r < yr and g < yg
+
+
+def test_nine_is_a_deeper_gold_than_eight_and_still_not_orange(mod):
+    """Warmer as the evening goes on, but orange is the next step up at 23:30
+    and the evening must not have been there already."""
+    r, g, b = mod.GOLD
+    dr, dg, db = mod.DEEP_GOLD
+    orr, org = 127, 70                              # palette 9, in 7-bit terms
+    assert dg / dr < g / r, 'deeper: less green for its red'
+    assert dg / dr > org / orr, '...but still yellower than the orange after it'
+    assert dr < orr and dg < org, 'and dimmer than it in both channels'
 
 
 def test_gold_keeps_its_green_well_under_its_red(mod):
@@ -181,7 +195,7 @@ def test_weekly_bar_is_purple(mod, out):
 
 
 def test_a_full_bar_lights_every_cell(mod, out):
-    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.GOLD] * 8
+    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.DEEP_GOLD] * 8
     assert paint(mod, out, at(2026, 8, SAT, 12, 0), mod.M_HAB2) == [mod.PINK] * 8
 
 
@@ -279,14 +293,14 @@ def test_the_evening_holds_still_until_ten(mod, out):
     nudging before either would be worth ignoring."""
     base = at(2026, 8, 18, 21, 0)
     for offset in range(0, 3600, 137):
-        assert paint(mod, out, base + offset) == [mod.GOLD] * 8
+        assert paint(mod, out, base + offset) == [mod.DEEP_GOLD] * 8
 
 
 def test_from_ten_the_gold_blinks_at_the_slowest_rate_on_the_board(mod, out):
     base = at(2026, 8, 18, 22, 30)
     stage = mod.DAY.stage(mod.DAY.bar(base)[1])
     assert paint(mod, out, when(base, stage, True)) == [mod.OFF] * 8
-    assert paint(mod, out, when(base, stage, False)) == [mod.GOLD] * 8
+    assert paint(mod, out, when(base, stage, False)) == [mod.DEEP_GOLD] * 8
     assert stage.on + stage.off == max(st.on + st.off for st in mod.BAR_STAGES)
 
 
@@ -294,7 +308,7 @@ def test_ten_oclock_blinks_at_half_the_rate_the_last_hour_does(mod):
     """Twice as slow as the first stage that was there before it."""
     ten = mod.DAY.stage(2 * 3600)
     eleven = mod.DAY.stage(3600)
-    assert ten.colour == mod.GOLD and eleven.colour == mod.YELLOW
+    assert ten.colour == mod.DEEP_GOLD and eleven.colour == mod.YELLOW
     assert ten.on == eleven.on * 2, 'the lit chunk doubles'
     assert ten.off == eleven.off == mod.FLASH_OFF, 'and the dark one does not'
 

@@ -116,10 +116,10 @@ about 1 KB/s to 1 Gbit/s. Capture and polling run only while the tab is up.
 Row 1 of most tabs shows how much of the period has begun — eight three-hour
 slices of the day, or a day per pad of the week from Sunday. A cell lights as
 its slice *starts*, so a full bar means you are inside the last one. The day
-bar is blue until the evening, then warms and quickens without ever stepping
-back: gold at 20:00, gold blinking slowly at 22:00, yellow at 23:00, orange at
-23:30, red and faster from 23:40, a panic strobe for the last five minutes. The
-week turns pink and never blinks.
+bar is blue until the evening, then warms and quickens: gold at 20:00, deeper
+gold at 21:00, blinking slowly at 22:00, yellow at 23:00, orange at 23:30, red
+and faster from 23:40, a panic strobe for the last five minutes. The week turns
+pink and never blinks.
 
 ## Install
 
@@ -145,7 +145,7 @@ survives a reboot because it stores when it started, not how far along it is.
 
 ## Tests
 
-`tests/run-tests` (729 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (733 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every

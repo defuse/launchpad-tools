@@ -119,6 +119,10 @@ YELLOW, CYAN = 13, 33
 # LED-to-LED variation shows as a visible difference in colour across the row;
 # further into the amber it is the same variation and much less of a shift.
 GOLD = (110, 74, 0)
+# ...and deeper still once the bar fills at 21:00. Warmer than GOLD but held
+# yellower and dimmer than the ORANGE of 23:30, which has to stay the next step
+# up rather than something the evening has already been.
+DEEP_GOLD = (105, 64, 0)
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
 # mode row: one colour per mode; the SELECTED mode shows white instead
@@ -155,7 +159,7 @@ PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
            # shows today -- but a bar's colour missing from here comes out as
            # an unlit cell, which is the window disagreeing with the board
            YELLOW: '#ffd21a', ORANGE: '#ff8b1f', PURPLE: '#9d5cff',
-           PINK: '#ff6fae', GOLD: '#dd9500'}
+           PINK: '#ff6fae', GOLD: '#dd9500', DEEP_GOLD: '#d38100'}
 
 # ---- layout ---------------------------------------------------------------
 # Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
@@ -242,12 +246,13 @@ BAR_STAGES = (
     Stage(20 * 60, RED,    FLASH_ON / 2, FLASH_OFF / 2),   # 23:40: twice pomodoro
     Stage(30 * 60, ORANGE, FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
     Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
-    # The evening, before any of that is urgent: gold from 20:00, and from
-    # 22:00 the same gold at half the yellow rate again -- the slowest blink on
-    # the board, which is the point. These two are the only stages that apply
-    # before the bar is full.
-    Stage(2 * 3600, GOLD,  FLASH_ON * 4, FLASH_OFF),       # 22:00
-    Stage(4 * 3600, GOLD,  0, 0),                          # 20:00, and solid
+    # The evening, before any of that is urgent: gold from 20:00, deeper once
+    # the bar fills at 21:00, and from 22:00 that same deep gold at half the
+    # yellow rate again -- the slowest blink on the board, which is the point.
+    # These three are the only stages that apply before the bar is full.
+    Stage(2 * 3600, DEEP_GOLD, FLASH_ON * 4, FLASH_OFF),   # 22:00
+    Stage(3 * 3600, DEEP_GOLD, 0, 0),                      # 21:00, and solid
+    Stage(4 * 3600, GOLD,      0, 0),                      # 20:00, and solid
 )
 
 
