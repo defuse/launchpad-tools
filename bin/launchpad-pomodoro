@@ -110,6 +110,10 @@ OFF, WHITE, RED, GREEN, BLUE = 0, 3, 5, 21, 45
 # (35, 127, 70) still had enough blue to look like mint.
 TODO_DONE = (6, 92, 6)
 YELLOW, CYAN = 13, 33
+# The evening's gold. Sent as RGB: the palette's yellows are all brighter than
+# this, and it has to sit below the yellow the last hour starts on -- the bar
+# warms all evening and must never step back to a cooler colour.
+GOLD = (105, 85, 0)
 DIM_BLUE, DIM_CYAN = 47, 35              # palette: +2 from a colour is a dim variant
 
 # mode row: one colour per mode; the SELECTED mode shows white instead
@@ -146,7 +150,7 @@ PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
            # shows today -- but a bar's colour missing from here comes out as
            # an unlit cell, which is the window disagreeing with the board
            YELLOW: '#ffd21a', ORANGE: '#ff8b1f', PURPLE: '#9d5cff',
-           PINK: '#ff6fae'}
+           PINK: '#ff6fae', GOLD: '#d3ab00'}
 
 # ---- layout ---------------------------------------------------------------
 # Programmer mode addresses pads as row*10+col, row 1 = BOTTOM, col 1 = LEFT.
@@ -233,6 +237,12 @@ BAR_STAGES = (
     Stage(20 * 60, RED,    FLASH_ON / 2, FLASH_OFF / 2),   # 23:40: twice pomodoro
     Stage(30 * 60, ORANGE, FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
     Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
+    # The evening, before any of that is urgent: gold from 20:00, and from
+    # 22:00 the same gold at half the yellow rate again -- the slowest blink on
+    # the board, which is the point. These two are the only stages that apply
+    # before the bar is full.
+    Stage(2 * 3600, GOLD,  FLASH_ON * 4, FLASH_OFF),       # 22:00
+    Stage(4 * 3600, GOLD,  0, 0),                          # 20:00, and solid
 )
 
 
@@ -272,7 +282,11 @@ class Period(NamedTuple):
 
     @property
     def solid(self):
-        """A full bar with time still to run: lit, and holding still."""
+        """Nothing to say: hold still, and let the bar wear its own colour.
+
+        `within` of None is what marks it as the do-nothing answer rather than
+        a stage that matched.
+        """
         return Stage(None, self.full, 0, 0)
 
     def bar(self, now=None):
@@ -305,11 +319,10 @@ class Period(NamedTuple):
         return out
 
     def stage(self, left):
-        """How a full bar of this period looks with `left` seconds to run.
+        """How this bar looks with `left` seconds of the period to run.
 
-        A period that does not flash only ever has the one stage: solid, for
-        however long it stays full. The weekly bar is full for a whole day, and
-        a day of blinking pads is noise rather than urgency.
+        A period that does not flash never has one. The weekly bar is full for
+        a whole day, and a day of blinking pads is noise rather than urgency.
         """
         if not self.flashes:
             return self.solid
@@ -1546,9 +1559,13 @@ class Board:
         as its own background.
         """
         lit, left = period.bar()
-        stage = period.stage(left) if lit >= CELLS else None
-        colour = stage.colour if stage else period.colour
-        if stage and stage.off and (time.time() % (stage.on + stage.off)) >= stage.on:
+        # what the bar wears when no stage has anything to say: its own colour
+        # while it fills, its full colour once it has
+        colour = period.full if lit >= CELLS else period.colour
+        stage = period.stage(left)
+        if stage.within is not None:      # a real stage, not the do-nothing one
+            colour = stage.colour         # keyed on the time left, filled or not
+        if stage.off and (time.time() % (stage.on + stage.off)) >= stage.on:
             colour = OFF                                  # the dark half of a blink
         return [colour if c < lit else OFF for c in range(CELLS)]
 

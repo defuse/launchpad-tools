@@ -98,11 +98,18 @@ class FakeOut:
     def send(self, msg):
         self.sent.append(msg)
     def lit(self):
-        """note -> velocity, as the board would look right now."""
+        """pad -> colour, as the board would look right now.
+
+        A palette index for a note_on and an (r, g, b) triple for a lighting
+        SysEx, which is exactly what was asked for -- otherwise a pad lit in a
+        colour the palette does not have looks unlit to every test.
+        """
         out = {}
         for m in self.sent:
             if m.type == 'note_on':
                 out[m.note] = m.velocity
+            elif m.type == 'sysex' and len(m.data) == 11:
+                out[m.data[7]] = tuple(m.data[8:])
         return out
 
 

@@ -59,9 +59,12 @@ def test_week_bar_counts_down_to_sunday(mod):
 # ---- the last hour --------------------------------------------------------
 # clock time -> (colour, blink period in seconds; 0 = solid)
 @pytest.mark.parametrize('h,mi,colour,period', [
-    (21, 0,  'BLUE',   0),              # full, but three hours still to run
-    (22, 59, 'BLUE',   0),
-    (23, 0,  'YELLOW', 3.3),            # heads-up: half the rate, same dark gap
+    (19, 59, 'BLUE',   0),              # the day is still the day
+    (20, 0,  'GOLD',   0),              # evening: gold, holding still
+    (21, 59, 'GOLD',   0),
+    (22, 0,  'GOLD',   6.3),            # ...and now the slowest blink there is
+    (22, 59, 'GOLD',   6.3),
+    (23, 0,  'YELLOW', 3.3),            # heads-up: half that rate again
     (23, 29, 'YELLOW', 3.3),
     (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
     (23, 39, 'ORANGE', 1.8),
@@ -72,10 +75,11 @@ def test_week_bar_counts_down_to_sunday(mod):
     (23, 55, 'RED',    0.2),            # panic
     (23, 59, 'RED',    0.2),
 ])
-def test_the_daily_bar_counts_itself_down_through_the_last_hour(mod, h, mi, colour, period):
+def test_the_daily_bar_counts_itself_down_through_the_evening(mod, h, mi, colour, period):
     _, left = mod.DAY.bar(at(2026, 8, 18, h, mi))
     st = mod.DAY.stage(left)
-    assert st.colour == getattr(mod, colour)
+    want = getattr(mod, colour)
+    assert st.colour == (mod.DAY.full if st.within is None else want)
     assert round(st.on + st.off, 6) == period
 
 
@@ -87,21 +91,32 @@ def test_slowing_the_blink_lengthens_the_lit_chunk_not_the_gap(mod):
     assert all(st.off <= mod.FLASH_OFF for st in mod.BAR_STAGES)
 
 
-def test_the_last_hour_warms_from_yellow_to_red(mod):
+def test_the_evening_warms_from_gold_to_red(mod):
     """Colour escalates with the rate, so the bar reads at a glance and from
     the corner of an eye both -- and never doubles back to a cooler colour."""
     assert [st.colour for st in mod.BAR_STAGES] == \
-        [mod.RED, mod.RED, mod.RED, mod.ORANGE, mod.YELLOW]   # shortest first
-    assert mod.DAY.full not in [st.colour for st in mod.BAR_STAGES], \
-        'a full bar must not already be wearing an escalation colour'
+        [mod.RED, mod.RED, mod.RED, mod.ORANGE, mod.YELLOW, mod.GOLD, mod.GOLD]
+    assert mod.DAY.colour not in [st.colour for st in mod.BAR_STAGES], \
+        'a bar with hours to run must not wear an escalation colour'
+
+
+def test_gold_is_dimmer_and_yellower_than_the_yellow_after_it(mod):
+    """The evening warms into the last hour. Gold brighter than that yellow
+    would be a step back at 23:00, when the thing actually gets urgent."""
+    r, g, b = mod.GOLD
+    yr, yg, yb = 127, 105, 13                       # palette 13, in 7-bit terms
+    assert b < yb and r < yr and g < yg
 
 
 def test_each_stage_blinks_faster_than_the_one_before(mod):
     """Ordered shortest-remaining first, and strictly escalating -- a stage
     that blinked slower than its predecessor would read as the deadline
-    receding."""
-    periods = [st.on + st.off for st in mod.BAR_STAGES]
+    receding. A stage that does not blink at all is slower than any that does,
+    so it can only come last."""
+    blinking = [st for st in mod.BAR_STAGES if st.off]
+    periods = [st.on + st.off for st in blinking]
     assert periods == sorted(periods)
+    assert blinking == list(mod.BAR_STAGES[:len(blinking)]), 'the solid one is last'
     assert [st.within for st in mod.BAR_STAGES] == sorted(st.within for st in mod.BAR_STAGES)
 
 
@@ -109,7 +124,8 @@ def test_nothing_blinks_faster_than_the_board_is_drawn(mod):
     """Under two frames a phase the blink aliases against the render loop: it
     comes out irregular, and at exactly one frame it can hold still."""
     for st in mod.BAR_STAGES:
-        assert st.on >= 2 * mod.TICK and st.off >= 2 * mod.TICK
+        if st.off:                                  # a solid stage has no phase
+            assert st.on >= 2 * mod.TICK and st.off >= 2 * mod.TICK
 
 
 def test_the_weekly_bar_has_one_stage_and_it_is_solid(mod):
@@ -128,7 +144,7 @@ def test_a_full_week_is_pink_and_a_full_day_is_red(mod):
 def test_every_blink_is_chunks_cut_out_of_a_lit_pad(mod):
     """Not a 50% square wave until the very end: a pad that is lit most of the
     time reads as 'live' rather than 'error'."""
-    slow = [st for st in mod.BAR_STAGES if st.on + st.off > 0.5]
+    slow = [st for st in mod.BAR_STAGES if st.off and st.on + st.off > 0.5]
     assert all(st.on / (st.on + st.off) > 0.8 for st in slow)
 
 
@@ -157,14 +173,18 @@ def test_weekly_bar_is_purple(mod, out):
 
 
 def test_a_full_bar_lights_every_cell(mod, out):
-    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.BLUE] * 8
+    assert paint(mod, out, at(2026, 8, 18, 21, 30)) == [mod.GOLD] * 8
     assert paint(mod, out, at(2026, 8, SAT, 12, 0), mod.M_HAB2) == [mod.PINK] * 8
 
 
 def when(base, stage, want_dark):
-    """A moment near `base` in the lit or dark chunk of `stage`'s blink."""
+    """A moment near `base` in the lit or dark chunk of `stage`'s blink.
+
+    Searches a whole period: the slowest stage is dark for 0.3 s in every 6.3,
+    so a fixed few seconds of looking can miss it entirely.
+    """
     period = stage.on + stage.off
-    return next(base + d / 100 for d in range(400)
+    return next(base + d / 100 for d in range(int(period * 100) + 1)
                 if ((base + d / 100) % period >= stage.on) == want_dark)
 
 
@@ -235,6 +255,46 @@ def test_a_label_lines_up_with_the_slice_it_names(mod):
     lit, _ = mod.DAY.bar(at(2026, 8, 18, 7, 0))
     assert lit == 3
     assert mod.DAY.labels()[lit - 1] == '06–09'
+
+
+# ---- the evening ---------------------------------------------------------
+
+def test_the_evening_turns_gold_before_the_bar_is_even_full(mod, out):
+    """20:00 is not a slice boundary: seven pads are lit and the eighth comes
+    on at 21:00. The colour is the time of day, not the fill."""
+    assert paint(mod, out, at(2026, 8, 18, 20, 0)) == [mod.GOLD] * 7 + [mod.OFF]
+    assert paint(mod, out, at(2026, 8, 18, 19, 59)) == [mod.BLUE] * 7 + [mod.OFF]
+
+
+def test_the_evening_holds_still_until_ten(mod, out):
+    """Gold on its own is a marker; gold blinking is a nudge. Two hours of
+    nudging before either would be worth ignoring."""
+    base = at(2026, 8, 18, 21, 0)
+    for offset in range(0, 3600, 137):
+        assert paint(mod, out, base + offset) == [mod.GOLD] * 8
+
+
+def test_from_ten_the_gold_blinks_at_the_slowest_rate_on_the_board(mod, out):
+    base = at(2026, 8, 18, 22, 30)
+    stage = mod.DAY.stage(mod.DAY.bar(base)[1])
+    assert paint(mod, out, when(base, stage, True)) == [mod.OFF] * 8
+    assert paint(mod, out, when(base, stage, False)) == [mod.GOLD] * 8
+    assert stage.on + stage.off == max(st.on + st.off for st in mod.BAR_STAGES)
+
+
+def test_ten_oclock_blinks_at_half_the_rate_the_last_hour_does(mod):
+    """Twice as slow as the first stage that was there before it."""
+    ten = mod.DAY.stage(2 * 3600)
+    eleven = mod.DAY.stage(3600)
+    assert ten.colour == mod.GOLD and eleven.colour == mod.YELLOW
+    assert ten.on == eleven.on * 2, 'the lit chunk doubles'
+    assert ten.off == eleven.off == mod.FLASH_OFF, 'and the dark one does not'
+
+
+def test_the_week_is_not_gold_in_the_evening(mod, out):
+    """The stages are the day's. A week does not have an evening."""
+    assert paint(mod, out, at(2026, 8, WED, 22, 30), mod.M_HAB2) == \
+        [mod.WEEK.colour] * 4 + [mod.OFF] * 4
 
 
 def test_every_colour_a_bar_can_take_has_a_hex(mod):
