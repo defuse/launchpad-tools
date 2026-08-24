@@ -64,8 +64,8 @@ def test_week_bar_counts_down_to_sunday(mod):
     (20, 59, 'GOLD',   0),
     (21, 0,  'DEEP_GOLD', 0),           # deeper once the bar fills
     (21, 59, 'DEEP_GOLD', 0),
-    (22, 0,  'DEEP_GOLD', 6.3),         # ...and now the slowest blink there is
-    (22, 59, 'DEEP_GOLD', 6.3),
+    (22, 0,  'DEEP_GOLD', 6.0),         # ...and now the slowest blink there is
+    (22, 59, 'DEEP_GOLD', 6.0),
     (23, 0,  'YELLOW', 3.3),            # heads-up: half that rate again
     (23, 29, 'YELLOW', 3.3),
     (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
@@ -85,12 +85,14 @@ def test_the_daily_bar_counts_itself_down_through_the_evening(mod, h, mi, colour
     assert round(st.on + st.off, 6) == period
 
 
-def test_slowing_the_blink_lengthens_the_lit_chunk_not_the_gap(mod):
+def test_the_last_hour_slows_by_the_lit_chunk_and_not_the_gap(mod):
     """A dark chunk that grows with the period stops reading as a blink and
-    starts reading as a pad that is off."""
-    fits = [st for st in mod.BAR_STAGES if st.on + st.off >= 1.8]
+    starts reading as a pad that is off. The evening's own blink is the
+    exception, and deliberately: see the stage before this hour."""
+    hour = [st for st in mod.BAR_STAGES if st.within <= 3600 and st.off]
+    fits = [st for st in hour if st.on + st.off >= 1.8]
     assert {st.off for st in fits} == {mod.FLASH_OFF}
-    assert all(st.off <= mod.FLASH_OFF for st in mod.BAR_STAGES)
+    assert all(st.off <= mod.FLASH_OFF for st in hour)
 
 
 def test_the_evening_warms_from_gold_to_red(mod):
@@ -305,13 +307,14 @@ def test_from_ten_the_gold_blinks_at_the_slowest_rate_on_the_board(mod, out):
     assert stage.on + stage.off == max(st.on + st.off for st in mod.BAR_STAGES)
 
 
-def test_ten_oclock_blinks_at_half_the_rate_the_last_hour_does(mod):
-    """Twice as slow as the first stage that was there before it."""
+def test_ten_oclock_is_slower_and_darker_for_longer_than_the_last_hour(mod):
+    """Slower than the stage after it, and with a gap you can actually catch:
+    over a six second cycle a 0.3 s blip has to be looked at to be seen."""
     ten = mod.DAY.stage(2 * 3600)
     eleven = mod.DAY.stage(3600)
     assert ten.colour == mod.DEEP_GOLD and eleven.colour == mod.YELLOW
-    assert ten.on == eleven.on * 2, 'the lit chunk doubles'
-    assert ten.off == eleven.off == mod.FLASH_OFF, 'and the dark one does not'
+    assert ten.on + ten.off > eleven.on + eleven.off, 'slower'
+    assert ten.off > eleven.off, 'and dark for longer while it is at it'
 
 
 def test_the_week_is_not_gold_in_the_evening(mod, out):

@@ -249,10 +249,12 @@ BAR_STAGES = (
     Stage(30 * 60, ORANGE, FLASH_ON, FLASH_OFF),           # 23:30: pomodoro cadence
     Stage(60 * 60, YELLOW, FLASH_ON * 2, FLASH_OFF),       # 23:00: half rate, yellow
     # The evening, before any of that is urgent: gold from 20:00, deeper once
-    # the bar fills at 21:00, and from 22:00 that same deep gold at half the
-    # yellow rate again -- the slowest blink on the board, which is the point.
+    # the bar fills at 21:00, and from 22:00 that same deep gold blinking
+    # slowly. Its dark chunk is a whole second rather than the FLASH_OFF the
+    # rest of the row keeps: over a six second cycle a 0.3 s blip is something
+    # you have to be looking at to catch, and this stage is meant to be caught.
     # These three are the only stages that apply before the bar is full.
-    Stage(2 * 3600, DEEP_GOLD, FLASH_ON * 4, FLASH_OFF),   # 22:00
+    Stage(2 * 3600, DEEP_GOLD, 5.0, 1.0),                  # 22:00
     Stage(3 * 3600, DEEP_GOLD, 0, 0),                      # 21:00, and solid
     Stage(4 * 3600, GOLD,      0, 0),                      # 20:00, and solid
 )
