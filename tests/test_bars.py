@@ -112,12 +112,13 @@ def test_gold_is_under_the_yellow_after_it_in_every_channel(mod):
 
 
 def test_nine_is_a_deeper_gold_than_eight_and_still_not_orange(mod):
-    """Warmer as the evening goes on, but orange is the next step up at 23:30
-    and the evening must not have been there already."""
+    """Warmer and darker as the evening goes on, but orange is the next step up
+    at 23:30 and the evening must not have been there already."""
     r, g, b = mod.GOLD
     dr, dg, db = mod.DEEP_GOLD
     orr, org = 127, 70                              # palette 9, in 7-bit terms
     assert dg / dr < g / r, 'deeper: less green for its red'
+    assert dr + dg < (r + g) * 0.8, 'and darker by enough to be seen'
     assert dg / dr > org / orr, '...but still yellower than the orange after it'
     assert dr < orr and dg < org, 'and dimmer than it in both channels'
 
