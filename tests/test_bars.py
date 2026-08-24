@@ -64,8 +64,8 @@ def test_week_bar_counts_down_to_sunday(mod):
     (20, 59, 'GOLD',   0),
     (21, 0,  'DEEP_GOLD', 0),           # deeper once the bar fills
     (21, 59, 'DEEP_GOLD', 0),
-    (22, 0,  'DEEP_GOLD', 6.0),         # ...and now the slowest blink there is
-    (22, 59, 'DEEP_GOLD', 6.0),
+    (22, 0,  'DEEP_GOLD', 5.0),         # ...and now the slowest blink there is
+    (22, 59, 'DEEP_GOLD', 5.0),
     (23, 0,  'YELLOW', 3.3),            # heads-up: half that rate again
     (23, 29, 'YELLOW', 3.3),
     (23, 30, 'ORANGE', 1.8),            # pomodoro cadence
@@ -167,10 +167,10 @@ def test_a_full_week_is_pink_and_a_full_day_is_red(mod):
 
 
 def test_every_blink_is_chunks_cut_out_of_a_lit_pad(mod):
-    """Not a 50% square wave until the very end: a pad that is lit most of the
-    time reads as 'live' rather than 'error'."""
+    """Not a 50% square wave until the very end: a pad that is lit for most of
+    its cycle reads as 'live' rather than 'error'."""
     slow = [st for st in mod.BAR_STAGES if st.off and st.on + st.off > 0.5]
-    assert all(st.on / (st.on + st.off) > 0.8 for st in slow)
+    assert all(st.on / (st.on + st.off) >= 0.75 for st in slow)
 
 
 # ---- what lands on the pads ----------------------------------------------

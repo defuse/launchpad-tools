@@ -254,7 +254,7 @@ BAR_STAGES = (
     # rest of the row keeps: over a six second cycle a 0.3 s blip is something
     # you have to be looking at to catch, and this stage is meant to be caught.
     # These three are the only stages that apply before the bar is full.
-    Stage(2 * 3600, DEEP_GOLD, 5.0, 1.0),                  # 22:00
+    Stage(2 * 3600, DEEP_GOLD, 4.0, 1.0),                  # 22:00
     Stage(3 * 3600, DEEP_GOLD, 0, 0),                      # 21:00, and solid
     Stage(4 * 3600, GOLD,      0, 0),                      # 20:00, and solid
 )
