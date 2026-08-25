@@ -4,7 +4,7 @@ Nothing here reads the real machine: every test hands the board a snapshot and
 checks what it draws, or presses a pad and checks what it would have run. The
 poller that fills the snapshot in is a thread the harness never starts.
 """
-import json
+import json, os
 import pytest
 from lpharness import FakeOut, FakePopen, new_board
 
@@ -512,12 +512,36 @@ def test_transport_buttons_talk_to_spotify(mach, mod):
 @pytest.mark.parametrize('running,effects,expect', [
     (True,  True,  ['easyeffects', '-b', '1']),                # on  -> bypassed
     (True,  False, ['easyeffects', '-b', '2']),                # bypassed -> on
-    (False, False, ['easyeffects', '--gapplication-service']),  # stopped -> started
+    (False, False, ['easyeffects', '--hide-window']),          # stopped -> started
 ])
 def test_the_effects_button_turns_it_on_however_it_was_off(mach, mod, running, effects, expect):
     press(mach, mod, col_of(mod, 'effects'), audio(mod, running=running, effects=effects))
     assert ran('easyeffects') == [expect]
     assert mach.machine.snap.effects is effects, 'unchanged until it is read back'
+
+
+# ---- EasyEffects is a Qt application ------------------------------------
+
+def test_easyeffects_is_given_a_platform_it_can_start_without_a_display(mod):
+    """Every invocation builds a QApplication first, even `-b 3`, which only
+    asks a question and prints a number. Under a systemd user service there is
+    no display to build it against and it aborts before answering -- 377 core
+    dumps in one morning, and a board that could not read or set the effects."""
+    env = mod.env_for(['easyeffects', '-b', '3'])
+    assert env['QT_QPA_PLATFORM'] == 'offscreen'
+    assert env['HOME'] == os.environ['HOME'], 'the rest of the environment survives'
+
+
+def test_nothing_else_is_given_that(mod):
+    """pactl and gdbus are not Qt, and pw-record with no display is fine."""
+    for cmd in (['pactl', 'info'], ['gdbus', 'call'], ['pw-record', '-']):
+        assert mod.env_for(cmd) is None
+
+
+def test_the_effects_calls_go_out_with_it(mach, mod):
+    press(mach, mod, col_of(mod, 'effects'), audio(mod, running=True, effects=True))
+    started = [p for p in FakePopen.instances if p.argv[0] == 'easyeffects'][-1]
+    assert started.env['QT_QPA_PLATFORM'] == 'offscreen'
     assert mach.machine.recheck_at > 0
 
 

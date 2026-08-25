@@ -79,6 +79,10 @@ from typing import Callable, NamedTuple
 
 # ---- hardware -------------------------------------------------------------
 SYSEX_PROGRAMMER = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01]
+# Where the kernel says which sequencer ports are subscribed to which. See
+# midi_linked(): it is the only thing that notices the device coming back.
+SEQ_CLIENTS = '/proc/asound/seq/clients'
+LINK_CHECK  = 5.0                             # seconds between those checks
 SYSEX_LIVE       = [0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x00]
 # Lighting SysEx, RGB form: header, then 03 <pad> <r> <g> <b>, 0-127 each.
 # A note_on can only name one of the palette's 128 entries; this can ask for
@@ -572,12 +576,27 @@ def _check_layout():
 _check_layout()
 
 
+def env_for(cmd):
+    """The environment a command needs, or None for this process's own.
+
+    EasyEffects is a Qt application now, and every invocation of it -- even
+    `-b 3`, which only asks a question and prints a number -- builds a
+    QApplication first. Under a systemd user service there is no display to
+    build it against, so it aborts before answering: 377 core dumps in one
+    morning, and a board that could no longer read or set the effects.
+    `offscreen` is a real Qt platform plugin that needs no display at all.
+    """
+    if os.path.basename(cmd[0]) == 'easyeffects':
+        return {**os.environ, 'QT_QPA_PLATFORM': 'offscreen'}
+    return None
+
+
 def sh(*cmd, timeout=4):
     """Run a command and return its stdout, or '' if anything at all goes
     wrong. Only ever called from the poller thread."""
     try:
         return subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=timeout).stdout
+                              timeout=timeout, env=env_for(cmd)).stdout
     except Exception:
         return ''
 
@@ -586,7 +605,8 @@ def spawn(*cmd):
     """Fire and forget. A press must never wait on pactl or dbus: the thread
     that reads the pads is the thread that draws them."""
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         env=env_for(cmd))
     except Exception as e:
         print(f'{cmd[0]}: {e!r}', flush=True)
 
@@ -966,7 +986,10 @@ class Machine:
         unbypassed, a stopped one is started. Turning it off is bypass, not
         quitting -- the sink stays and the streams do not have to move."""
         if on and not self.snap.running:
-            spawn('easyeffects', '--gapplication-service')
+            # --hide-window, not --service-mode: as of 8.2.8 service mode
+            # suppresses the tray icon, and one started from here should be no
+            # different from the one that starts at login
+            spawn('easyeffects', '--hide-window')
         elif self.snap.running:
             spawn('easyeffects', '-b', '1' if not on else '2')
         self.recheck()                 # read back what it did, never assume
@@ -2390,6 +2413,104 @@ class Board:
         self.save()
 
 
+class NullPort:
+    """Somewhere to send while the Launchpad is not there.
+
+    Unplugged, the board goes on running -- a pomodoro started before the cable
+    came out still finishes, and still chimes -- and relink() puts the real
+    port back when it returns.
+    """
+    def send(self, msg):
+        pass
+
+    def iter_pending(self):
+        return iter(())
+
+    def close(self):
+        pass
+
+
+def midi_ports():
+    """The Launchpad's (output, input) port names, or (None, None).
+
+    The MIDI port, not the DAW one: only that one honours programmer mode.
+    """
+    def pick(lst):
+        lst = [n for n in lst if 'MK3' in n or 'Launchpad' in n]
+        return next((n for n in lst if 'MI' in n), lst[0] if lst else None)
+    return pick(mido.get_output_names()), pick(mido.get_input_names())
+
+
+def midi_linked(port_name, path=SEQ_CLIENTS):
+    """Is that port still subscribed to anything?
+
+    An ALSA sequencer subscription belongs to the kernel client, and the kernel
+    destroys and rebuilds that client when the device re-enumerates on USB --
+    the subscription goes with it, and does not come back. Nothing reports
+    this: sending to an unsubscribed port succeeds, so the board renders every
+    frame into nothing, the pads hold whatever they last showed, and no press
+    ever arrives. It went ten hours like that once.
+
+    True on any doubt at all -- an unreadable file, a name that is not there --
+    since reconnecting for no reason is worse than not noticing.
+    """
+    alsa = re.sub(r'\s+\d+:\d+$', '', port_name or '').split(':', 1)[-1].strip()
+    if not alsa:
+        return True
+    try:
+        block, seen = False, set()
+        for line in open(path):
+            if line.startswith('Client') or line.lstrip().startswith('Port'):
+                if block:
+                    break                       # the port's block has ended
+                block = f'"{alsa}"' in line
+            elif block:
+                for way in ('Connecting To:', 'Connected From:'):
+                    if way in line:
+                        seen.add(way)
+        # both ways: the board sends to the device and hears from it, and one
+        # without the other is half a board
+        return len(seen) == 2 if block or seen else True
+    except Exception:
+        return True
+
+
+def open_ports(o, i):
+    """Open both ports and put the Launchpad into programmer mode."""
+    out, inp = mido.open_output(o), mido.open_input(i)
+    out.send(mido.Message('sysex', data=SYSEX_PROGRAMMER))
+    time.sleep(0.1)
+    return out, inp
+
+
+def relink(board, out, inp):
+    """Find the Launchpad again and put the board back on it.
+
+    A re-enumerated device comes back in live mode and dark, so this is not a
+    reconnection: it is programmer mode again and a repaint of all 64 pads,
+    which is what clearing `shown` buys -- it records what the pads were told,
+    and they were told nothing since they came back.
+    """
+    for p in (out, inp):
+        try:
+            p.close()
+        except Exception:
+            pass
+    o, i = midi_ports()
+    if not o or not i:
+        print('launchpad gone; running without it', flush=True)
+        return NullPort(), NullPort()
+    try:
+        out, inp = open_ports(o, i)
+    except Exception as e:
+        print(f'could not reopen the launchpad: {e!r}', flush=True)
+        return NullPort(), NullPort()
+    board.out = out
+    board.shown.clear()
+    print(f'relinked: {o}', flush=True)
+    return out, inp
+
+
 def main():
     # systemd stops the unit with SIGTERM, whose default action kills the
     # process outright: the finally: below never ran and up to a second of
@@ -2398,53 +2519,55 @@ def main():
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, _term)
 
-    names = [n for n in mido.get_output_names() if 'MK3' in n or 'Launchpad' in n]
-    ins   = [n for n in mido.get_input_names()  if 'MK3' in n or 'Launchpad' in n]
-    # the MIDI (not DAW) port is the one that honours programmer mode
-    def pick(lst):
-        for n in lst:
-            if 'MI' in n: return n
-        return lst[0] if lst else None
-    o, i = pick(names), pick(ins)
+    o, i = midi_ports()
     if not o or not i:
         sys.exit(f"Launchpad not found.\n  outputs: {mido.get_output_names()}\n  inputs: {mido.get_input_names()}")
     print(f"out: {o}\nin : {i}")
-    with mido.open_output(o) as out, mido.open_input(i) as inp:
-        out.send(mido.Message('sysex', data=SYSEX_PROGRAMMER))
-        time.sleep(0.1)
-        b = Board(out); b.clear()
-        try:
-            while True:
-                for m in inp.iter_pending():
-                    if m.type == 'note_on' and m.velocity > 0:
-                        b.press(m.note)
-                    elif m.type == 'note_off' or (m.type == 'note_on' and m.velocity == 0):
-                        b.release(m.note)
-                try:
-                    b.tick()
-                    b.render()
-                except Exception as e:
-                    # keep the board alive; a bad frame is not worth a restart
-                    print(f"tick/render error: {e!r}", flush=True)
-                    time.sleep(0.5)
-                time.sleep(SPEC_TICK if b.mode == M_SPEC else TICK)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            # Persist FIRST. Anything below is cosmetic teardown that can fail
-            # (a dead popup, a yanked USB cable), and when it did, _flush never
-            # ran and a running pomodoro was silently lost.
+    out, inp = open_ports(o, i)
+    b = Board(out); b.clear()
+    checked = time.time()
+    try:
+        while True:
+            for m in inp.iter_pending():
+                if m.type == 'note_on' and m.velocity > 0:
+                    b.press(m.note)
+                elif m.type == 'note_off' or (m.type == 'note_on' and m.velocity == 0):
+                    b.release(m.note)
             try:
-                b._flush()
+                b.tick()
+                b.render()
             except Exception as e:
-                print(f"could not save state: {e!r}", flush=True)
+                # keep the board alive; a bad frame is not worth a restart
+                print(f"tick/render error: {e!r}", flush=True)
+                time.sleep(0.5)
+            if time.time() - checked >= LINK_CHECK:
+                checked = time.time()
+                if not midi_linked(o):
+                    out, inp = relink(b, out, inp)
+                    o = midi_ports()[0] or o    # the name carries its client
+            time.sleep(SPEC_TICK if b.mode == M_SPEC else TICK)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Persist FIRST. Anything below is cosmetic teardown that can fail
+        # (a dead popup, a yanked USB cable), and when it did, _flush never
+        # ran and a running pomodoro was silently lost.
+        try:
+            b._flush()
+        except Exception as e:
+            print(f"could not save state: {e!r}", flush=True)
+        try:
+            b._popup_cmd('hide')
+            b.clear(); time.sleep(0.05)
+            out.send(mido.Message('sysex', data=SYSEX_LIVE))
+        except Exception:
+            pass
+        for p in (out, inp):
             try:
-                b._popup_cmd('hide')
-                b.clear(); time.sleep(0.05)
-                out.send(mido.Message('sysex', data=SYSEX_LIVE))
+                p.close()
             except Exception:
                 pass
-            print("\nexited, launchpad restored")
+        print("\nexited, launchpad restored")
 
 if __name__ == '__main__':
     main()

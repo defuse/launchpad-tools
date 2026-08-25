@@ -143,9 +143,15 @@ State — timers with their real start times, habits, the todo list, the selecte
 tab — lives in `~/.local/share/launchpad-pomodoro.json`. A running timer
 survives a reboot because it stores when it started, not how far along it is.
 
+Unplug the Launchpad and the board keeps running with nowhere to draw; plug it
+back in and it re-opens the ports, puts the device back into programmer mode and
+redraws every pad. It checks for that every few seconds, because a device that
+re-enumerates on USB silently loses its ALSA subscriptions and nothing reports
+it: writing to an unsubscribed port succeeds.
+
 ## Tests
 
-`tests/run-tests` (733 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (752 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every
@@ -165,7 +171,7 @@ are wired to one particular desk; the names are constants at the top of
 | temperatures | an AMD CPU (`k10temp`), an NVIDIA GPU (`nvidia-smi`), an NVMe drive, and SATA drives via `drivetemp` |
 | disks | whatever `/proc/mdstat` lists |
 | subwoofer | two channels of a `TASCAM_SERIES_208i`, which sums them into the speakers as well — so the pad moves between two fixed levels that leave the speakers equally loud either way, rather than muting |
-| effects | EasyEffects 8; which preset is the headset's is read from its own autoload files, so renaming one cannot leave the pad lying |
+| effects | EasyEffects 8, a Qt app since 8.2 — its CLI is run with `QT_QPA_PLATFORM=offscreen` or it aborts under a service with no display. Which preset is the headset's is read from its own autoload files, so renaming one cannot leave the pad lying |
 | hardware | a Launchpad Mini MK3 in Programmer Mode; other Launchpads use different SysEx and pad numbering |
 
 Everything on those tabs needs `pactl`, `pw-record`, `gdbus` and `nvidia-smi` on

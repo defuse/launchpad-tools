@@ -61,6 +61,7 @@ class FakePopen:
     def __init__(self, argv, stdin=None, stdout=None, stderr=None,
                  text=None, env=None, bufsize=None, **kw):
         self.argv = list(argv)
+        self.env = env                     # what it was started with, if anything
         self.lines = []
         self.alive = True
         self.write_error = None
@@ -91,10 +92,23 @@ class FakeMessage:
         return f'Message({self.type},n={self.note},v={self.velocity})'
 
 
+class FakeIn:
+    """A MIDI input port with nothing to say."""
+    def __init__(self):
+        self.closed = False
+    def iter_pending(self):
+        return iter(())
+    def close(self):
+        self.closed = True
+
+
 class FakeOut:
     """A MIDI output port that just records."""
     def __init__(self):
         self.sent = []
+        self.closed = False
+    def close(self):
+        self.closed = True
     def send(self, msg):
         self.sent.append(msg)
     def lit(self):
@@ -113,13 +127,14 @@ class FakeOut:
         return out
 
 
-def _fake_mido():
+def _fake_mido(ports=()):
+    """mido, with a MIDI world the test decides the contents of."""
     return types.SimpleNamespace(
         Message=FakeMessage,
-        get_output_names=lambda: [],
-        get_input_names=lambda: [],
-        open_output=lambda n: None,
-        open_input=lambda n: None,
+        get_output_names=lambda: list(ports),
+        get_input_names=lambda: list(ports),
+        open_output=lambda n: FakeOut(),
+        open_input=lambda n: FakeIn(),
     )
 
 
