@@ -173,6 +173,27 @@ def test_the_navigation_is_two_pads_and_no_more(cal, mod):
     assert all(lit[mod.pad(r, mod.CAL_COL)] == mod.OFF for r in dark)
 
 
+def test_a_frame_that_changes_nothing_sends_nothing(cal, mod):
+    """The flicker: render_calendar blanked every cell and then painted it, so
+    with set() suppressing unchanged pads each one changed twice a frame --
+    off, on, off, on, twenty times a second. A still board must be silent."""
+    cal.render()
+    cal.out.sent.clear()
+    cal.render()
+    assert cal.out.sent == [], f'{len(cal.out.sent)} messages for an unchanged frame'
+
+
+def test_and_a_frame_that_changes_one_pad_sends_one_pad(cal, mod):
+    row, col = next(rc for rc, v in cal.calendar_cells(AUG).items()
+                    if v[0] == '2026-08-12')
+    cal.render()
+    cal.out.sent.clear()
+    cal.marks.add('2026-08-12')
+    cal.render()
+    assert len(cal.out.sent) == 1
+    assert cal.out.lit()[mod.pad(row, col)] == mod.CAL_MARK
+
+
 def test_walking_months_marks_nothing(cal, mod):
     cal.press(mod.pad(mod.CAL_NEXT, mod.CAL_COL))
     assert cal.marks == set()

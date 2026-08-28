@@ -179,3 +179,28 @@ def test_non_grid_notes_are_harmless(mod):
     for note in (0, 9, 10, 19, 89, 99, 127):
         b.press(note); b.release(note)
     assert b.held == {}
+
+
+def test_a_still_board_sends_nothing(mod, clock):
+    """Render the same unchanged state twice and the second frame must be
+    silent on every tab that is not animated by design.
+
+    set() suppresses a pad whose colour has not changed, so anything that
+    blanks a row and then paints it makes every one of those pads change twice
+    a frame -- which is what the calendar did, and it flickered at 20Hz. The
+    dedupe was working; it was being given two contradictory instructions.
+    """
+    import time as _t
+    clock.now = _t.mktime((2026, 8, 27, 12, 0, 0, 0, 0, -1))     # bar not blinking
+    b = new_board(mod, FakeOut())
+    b.habit_sets['1'] = {'2,0': {'name': 'a', 'colour': 37, 'state': 0}}
+    b.machine.snap = mod.Snapshot(disks=(('sda', 'ok'),),
+                                  mounts=((mod.MOUNTS[0], 900, 40.0),),
+                                  temps=((mod.SENSORS[0], 40),))
+    for mode in (mod.M_POMO, mod.M_HAB, mod.M_HAB2, mod.M_MACH, mod.M_CAL):
+        b.mode = mode
+        b.render()
+        b.out.sent.clear()
+        b.render()
+        assert b.out.sent == [], \
+            f'tab {mode} sent {len(b.out.sent)} messages for an unchanged frame'

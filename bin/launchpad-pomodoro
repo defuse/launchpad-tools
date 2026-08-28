@@ -1910,13 +1910,23 @@ class Board:
         return cells
 
     def render_calendar(self):
+        """Every pad decided once and set once.
+
+        Not blanked and then painted: set() suppresses a pad whose colour has
+        not changed, so writing OFF first makes every cell change twice a
+        frame -- off, on, off, on, twenty times a second. It flickers, and it
+        is the dedupe working exactly as it should on two contradictory
+        instructions.
+        """
+        cells = self.calendar_cells()
         for r in CAL_ROWS:
             for c in range(CELLS):
-                self.set(pad(r, c), OFF)
-        for (r, c), (_, colour) in self.calendar_cells().items():
-            self.set(pad(r, c), colour)
-        for r, colour in CAL_CTRL.items():
-            self.set(pad(r, CAL_COL), colour)
+                if c == CAL_COL:
+                    colour = CAL_CTRL.get(r, OFF)
+                else:
+                    cell = cells.get((r, c))
+                    colour = cell[1] if cell else OFF
+                self.set(pad(r, c), colour)
 
     def calendar_press(self, row, col):
         """A day toggles its mark; the eighth column gets you around."""
