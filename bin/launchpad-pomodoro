@@ -71,6 +71,7 @@ The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """
 import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum, re, glob
+import calendar
 try:
     import numpy as np                     # spectrum tab only; the rest runs without
 except ImportError:
@@ -136,6 +137,7 @@ MAGENTA, ORANGE, PINK = 53, 9, 57
 PURPLE = 49
 SKY = 37
 TAB_SELECTED = SKY                   # tabs are white; the selected one is sky blue
+CHORD_LIT = MAGENTA                  # ...and a chord lights both of its tabs
 HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
 
 # Tab column -> mode. Columns 3-5 are deliberately empty, and column 7 is the
@@ -144,6 +146,14 @@ HAB_FLASH = 0.3                      # in-progress habits alternate every 0.3s
 M_POMO, M_HAB, M_HAB2, M_MACH, M_SPEC, M_SYS, M_NET = 0, 1, 2, 3, 4, 5, 6
 TABS = (M_POMO, M_HAB, M_HAB2, M_MACH, M_SPEC, M_SYS, M_NET)
 HAB_MODES = (M_HAB, M_HAB2)          # each keeps its own independent set
+
+# Modes with no tab of their own, reached by holding one tab and pressing
+# another. A chord costs a tab nothing: the first press switches tabs at once
+# as it always did, and the second turns that into the chord -- so single
+# presses are never held back waiting to see whether a second one is coming.
+M_CAL = 7
+CHORDS = {frozenset((M_POMO, M_HAB)): M_CAL}
+CHORD_TABS = {mode: tabs for tabs, mode in CHORDS.items()}
 NET_IFACE = None                     # auto-detected: the default-route interface
 
 # habits occupy everything below the mode row except the top one, which the
@@ -192,6 +202,7 @@ class Timer(NamedTuple):
     fill:  int                 # colour it fills with
     chime: str                 # played when the row elapses
     warn:  tuple               # (seconds in, chime) one-shot warning, or None
+    kind:  str                 # what it is called in the log
 
     @property
     def length(self):
@@ -201,9 +212,10 @@ class Timer(NamedTuple):
 # Four strikes for the break and three for a pomodoro, so you can tell which
 # one ended without looking. The warning is higher and quicker than either, so
 # it cannot be mistaken for a timer actually finishing.
-POMODORO = Timer(step=3 * 60, idle=WHITE, fill=GREEN, chime='finish.wav', warn=None)
+POMODORO = Timer(step=3 * 60, idle=WHITE, fill=GREEN, chime='finish.wav', warn=None,
+                 kind='pomodoro')
 BREAK    = Timer(step=60, idle=BLUE, fill=BLUE, chime='break.wav',
-                 warn=(6 * 60, 'break-warn.wav'))
+                 warn=(6 * 60, 'break-warn.wav'), kind='break')
 
 BAR_ROW    = 1                                # the top row is an elapsed-time bar
 POMO_ROWS  = [2, 3, 4, 5]
@@ -363,7 +375,29 @@ WEEK = Period('week', PURPLE, full=PINK, slices=7, step=86400,
 
 # Which bar a tab carries on BAR_ROW. The pomodoro tab and the daily habit tab
 # show the same day, drawn by the same code from the same Period.
-BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK}
+BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK, M_CAL: DAY}
+
+
+# ---- calendar -------------------------------------------------------------
+# Six weeks of seven days, Sunday first -- the same day the week bar starts on.
+# That leaves the eighth column for getting around: no month needs more than
+# six rows, and no week more than seven days.
+CAL_ROWS = [2, 3, 4, 5, 6, 7]
+CAL_DAYS = 7                               # columns 0..6 are Sun..Sat
+CAL_COL  = 7                               # ...and this one is the controls
+CAL_PREV, CAL_NEXT, CAL_TODAY = 2, 3, 7    # which row each control sits on
+CAL_CTRL = {CAL_PREV: CYAN, CAL_NEXT: CYAN, CAL_TODAY: SKY}
+CAL_MARK = RED                             # a day you marked
+CAL_TODAY_COL = SKY                        # ...and the one you are in
+CAL_FULL = 8                               # pomodoros for a fully green day
+# 0 is white and 8 is green; past that it keeps going, to magenta at 16. The
+# ramp is RGB rather than palette entries: the palette has no smooth run
+# between those colours, and the whole point is to read the amount, not a state.
+CAL_NONE, CAL_DONE, CAL_OVER = (127, 127, 127), (0, 127, 0), (127, 0, 127)
+
+# Finished timers, one line each, appended and never rewritten. The calendar
+# counts them; nothing else reads them.
+LOG_FILE = os.path.expanduser('~/.local/share/launchpad-pomodoro-log.jsonl')
 
 
 # ---- machine and audio ----------------------------------------------------
@@ -528,6 +562,7 @@ class Widget(enum.Enum):
     BLANK  = 'blank'                   # claimed, deliberately dark
     CONTROL= 'control'
     SPECTRUM = 'spectrum'
+    CALENDAR = 'calendar'
 
 
 # The layout, stated once. press() dispatches on it and render() draws it, so a
@@ -543,6 +578,7 @@ TAB_ROWS = {
     M_SPEC: {Widget.SPECTRUM: SPEC_ROWS},
     M_SYS:  {Widget.CPU: CPU_ROWS, Widget.MEM: [MEM_ROW]},
     M_NET:  {Widget.NET: METER_ROWS},
+    M_CAL:  {Widget.CALENDAR: CAL_ROWS},
 }
 for _m in BARS:                        # a tab with a bar gives up that row
     TAB_ROWS[_m][Widget.BAR] = [BAR_ROW]
@@ -574,6 +610,92 @@ def _check_layout():
 
 
 _check_layout()
+
+
+def log_timer(kind, event, when=None, path=None):
+    """Record a timer that ended. One line, appended, never rewritten.
+
+    A day's worth of these is what colours the calendar. Failing to write must
+    never cost you the timer that just finished, so every error here is
+    swallowed: the log is a record of the board, not part of it.
+    """
+    when = time.time() if when is None else when
+    path = path or LOG_FILE            # looked up now, not when this was defined:
+    try:                               # a default would bind the real file into
+                                       # every caller, tests included
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a') as f:
+            f.write(json.dumps({'at': round(when, 3), 'kind': kind,
+                                'event': event,
+                                'day': time.strftime('%Y-%m-%d',
+                                                     time.localtime(when))}) + '\n')
+    except Exception as e:
+        print(f'could not log {kind} {event}: {e!r}', flush=True)
+
+
+def read_counts(path=None):
+    """day -> pomodoros claimed on it.
+
+    Claimed, not elapsed: a timer that ran out is a timer that ran out, and
+    the green pad at the end of the row is where you say it counted. Breaks
+    are logged too and deliberately not counted here.
+    """
+    out = {}
+    path = path or LOG_FILE
+    try:
+        with open(path) as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue                       # a torn last line, no more
+                if d.get('kind') == 'pomodoro' and d.get('event') == 'claimed':
+                    day = d.get('day')
+                    if day:
+                        out[day] = out.get(day, 0) + 1
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f'could not read the log: {e!r}', flush=True)
+    return out
+
+
+def blend(a, b, f):
+    """`f` of the way from colour a to colour b."""
+    f = max(0.0, min(1.0, f))
+    return tuple(round(x + (y - x) * f) for x, y in zip(a, b))
+
+
+def day_colour(n):
+    """What a day wearing `n` pomodoros looks like.
+
+    White for a day with none, greener as they add up, full green at a day's
+    worth, and on into magenta for the ones that went further. A ramp rather
+    than steps: the number is the point, and eight bands of green would just
+    be a bar chart with extra steps.
+    """
+    if n <= 0:
+        return CAL_NONE
+    if n <= CAL_FULL:
+        return blend(CAL_NONE, CAL_DONE, n / CAL_FULL)
+    return blend(CAL_DONE, CAL_OVER, (n - CAL_FULL) / CAL_FULL)
+
+
+def month_weeks(year, month):
+    """The month as up to six rows of seven days, Sunday first, 0 for padding.
+
+    Sunday because that is the day the week bar starts on, and two calendars
+    on one board that disagree about where a week begins would be worse than
+    either convention.
+    """
+    return calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
+
+
+def month_at(offset, now=None):
+    """(year, month) `offset` months from the one we are in."""
+    t = time.localtime(now if now is not None else time.time())
+    m = t.tm_mon - 1 + offset
+    return t.tm_year + m // 12, m % 12 + 1
 
 
 def env_for(cmd):
@@ -1168,6 +1290,9 @@ class Board:
         self.rows = {r: {'state': IDLE, 'started': 0.0} for r in TIMER_ROWS}
         self.todo = blank_todo()               # eight slots: name and state
         self._todo_edit = 0                    # the window's last edit applied
+        self.marks = set()                     # days you marked, as YYYY-MM-DD
+        self.cal_offset = 0                    # months from this one; not saved
+        self._counts, self._counts_at = {}, None   # the log, and what it was
         # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
         # every tab reuses the same 64 physical pads, so note 61 is both habit
         # cell (2,0) and pomodoro row 2's start pad. A press must only ever be
@@ -1443,8 +1568,11 @@ class Board:
             # Coming back up on the pomodoro tab after a restart meant the next
             # press aimed at a habit landed on a pomodoro row instead, and on an
             # elapsed row that press means "failed" -- it wiped the timer.
-            if d.get('mode') in TABS:
-                self.mode = self._popup_mode = d['mode']
+            self.marks = set(d.get('marks') or ())
+            # a chord mode is a mode like any other and comes back the same way
+            if d.get('mode') in TABS or d.get('mode') in CHORD_TABS:
+                self.mode = d['mode']
+                self._popup_mode = self.mode
             if self.mode not in HAB_MODES:
                 self._popup_mode = M_HAB
             self.habit_sets = d.get('habit_sets') or {str(m): {} for m in HAB_MODES}
@@ -1494,6 +1622,7 @@ class Board:
                 blob = json.dumps({'rows': {str(k): v for k, v in self.rows.items()},
                                    'todo': self.todo,
                                    'habit_sets': self.habit_sets,
+                                   'marks': sorted(self.marks),
                                    'mode': self.mode,
                                    'schema': 3})
             tmp = STATE_FILE + '.tmp'
@@ -1564,6 +1693,8 @@ class Board:
             return self.render_sys()
         if self.mode == M_NET:
             return self.render_net()
+        if self.mode == M_CAL:
+            return self.render_calendar()
         if self.mode in HAB_MODES:
             return self.render_habits()
         self.render_timers()
@@ -1582,9 +1713,13 @@ class Board:
         t0 = self.held_since(pad(FUNC_ROW, RESET_COL))
         if t0: held_for = time.time() - t0
         lit = int((held_for / RESET_HOLD) * RESET_COL) if held_for else 0
+        # a chord mode has no tab of its own, so it lights the two that reach
+        # it -- both, and in a colour no single tab ever wears
+        chord = CHORD_TABS.get(self.mode, ())
         for c in range(CELLS):
             if c == RESET_COL:                     col = RED
             elif lit and c >= RESET_COL - lit:     col = RED
+            elif c in chord and not lit:           col = CHORD_LIT
             elif c in TABS and not lit:            col = TAB_SELECTED if c == self.mode else WHITE
             else:                                  col = OFF
             self.set(pad(FUNC_ROW, c), col)
@@ -1734,6 +1869,68 @@ class Board:
                 self.set(pad(r, c), OFF)       # previous tab's colours behind
         if self._window == M_MACH or self._peeking:
             self._machine_send()               # keep an open window current
+
+    # ---- calendar ---------------------------------------------------------
+    def counts(self):
+        """The log, read again only when it has actually changed.
+
+        Stat per frame rather than a full read: the file only grows, and only
+        while this tab is drawn does anyone care.
+        """
+        try:
+            st = os.stat(LOG_FILE)
+            key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        if key != self._counts_at:
+            self._counts_at = key
+            self._counts = read_counts()
+        return self._counts
+
+    def calendar_cells(self, now=None):
+        """(row, col) -> (day string, colour) for the month being shown.
+
+        Marked beats today beats the count: marking is something you did on
+        purpose, and a day you marked should look the same whichever day it is.
+        """
+        now = time.time() if now is None else now
+        year, month = month_at(self.cal_offset, now)
+        today = time.strftime('%Y-%m-%d', time.localtime(now))
+        counts = self.counts()
+        cells = {}
+        for r, week in zip(CAL_ROWS, month_weeks(year, month)):
+            for c, day in enumerate(week[:CAL_DAYS]):
+                if not day:
+                    continue                       # padding, another month
+                iso = f'{year:04d}-{month:02d}-{day:02d}'
+                if iso in self.marks:      colour = CAL_MARK
+                elif iso == today:         colour = CAL_TODAY_COL
+                else:                      colour = day_colour(counts.get(iso, 0))
+                cells[(r, c)] = (iso, colour)
+        return cells
+
+    def render_calendar(self):
+        for r in CAL_ROWS:
+            for c in range(CELLS):
+                self.set(pad(r, c), OFF)
+        for (r, c), (_, colour) in self.calendar_cells().items():
+            self.set(pad(r, c), colour)
+        for r, colour in CAL_CTRL.items():
+            self.set(pad(r, CAL_COL), colour)
+
+    def calendar_press(self, row, col):
+        """A day toggles its mark; the eighth column gets you around."""
+        if col == CAL_COL:
+            if   row == CAL_PREV:  self.cal_offset -= 1
+            elif row == CAL_NEXT:  self.cal_offset += 1
+            elif row == CAL_TODAY: self.cal_offset = 0
+            return
+        cell = self.calendar_cells().get((row, col))
+        if not cell:
+            return                                 # padding: no day there
+        iso = cell[0]
+        self.marks.symmetric_difference_update({iso})
+        self.save()
 
     def alarm(self, p, colour=RED):
         """The strobe kept for things that are actually wrong."""
@@ -1945,9 +2142,12 @@ class Board:
             if t0 is not None:
                 frac = (now - t0) / RESET_HOLD
                 if frac >= 1.0:
+                    was = self.rows[r]['state']
                     self.rows[r] = {'state': IDLE, 'started': 0.0}
                     self.held.pop(pad(r, 0), None)
                     self.save()
+                    if was in (RUNNING, ELAPSED):
+                        log_timer(t.kind, 'abandoned')
                     for c in range(CELLS):
                         self.set(pad(r, c), t.idle if c == 0 else OFF)
                     continue
@@ -2027,6 +2227,7 @@ class Board:
             if elapsed >= t.length:
                 st['state'] = ELAPSED
                 self.save()
+                log_timer(t.kind, 'elapsed')
                 ding(t.chime)
 
     # ---- mode 2: system monitor -----------------------------------------
@@ -2190,6 +2391,17 @@ class Board:
         lr, lc = got
         if lr == FUNC_ROW:
             if lc in TABS:                     # reset pad is hold-only, see render()
+                # a tab pressed while another is still down is a chord, and it
+                # takes effect on this press. Nothing waits to find out whether
+                # a second press is coming, so a single tab is as quick as it
+                # ever was -- it just switches twice if a chord follows it
+                held = {c for c in TABS if c != lc and pad(FUNC_ROW, c) in self.held}
+                chord = next((CHORDS[frozenset((lc, c))] for c in held
+                              if frozenset((lc, c)) in CHORDS), None)
+                if chord is not None:
+                    self.mode = chord
+                    self.save()
+                    return
                 was, self.mode = self.mode, lc
                 if lc != M_MACH:
                     self.machine.leave()       # stop querying EasyEffects now
@@ -2229,6 +2441,8 @@ class Board:
             # read-only pads, but worth a look: hold one and the window says
             # what the colour will not
             self.machine_peek(lr, lc)
+        elif widget is Widget.CALENDAR:
+            self.calendar_press(lr, lc)
         elif widget is Widget.TOGGLE:
             self.todo[lc]['state'] = (self.todo[lc].get('state', 0) + 1) % 3
             self.save()
@@ -2404,8 +2618,10 @@ class Board:
             st.update(state=RUNNING, started=time.time(), warned=False)
             ding('start.wav')
         elif s == ELAPSED:
-            if c == CELLS - 1: st['state'] = CLAIMED       # claimed it
-            else:              st.update(state=IDLE, started=0)   # failed
+            claimed = c == CELLS - 1
+            if claimed: st['state'] = CLAIMED
+            else:       st.update(state=IDLE, started=0)   # written off
+            log_timer(TIMERS[r].kind, 'claimed' if claimed else 'written off')
         # A claimed row is a finished pomodoro worth keeping on the board, and
         # it used to take one brushed pad to wipe it. Clearing it now goes
         # through the same two second hold that abandons a running one, which

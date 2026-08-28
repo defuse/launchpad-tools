@@ -37,6 +37,10 @@ class FakeClock:
         the elapsed-time bars are defined against midnight, not an offset."""
         return _real_time.localtime(self.now if t is None else t)
 
+    def strftime(self, fmt, t=None):
+        """Formatting is the real one's; only the clock is ours."""
+        return _real_time.strftime(fmt, t or self.localtime())
+
 
 class FakeThread:
     """Records what would have been started; never actually runs."""
@@ -154,6 +158,7 @@ def load_pomodoro(state_file, clock=None):
     # --- neuter everything that leaves the process -----------------------
     m.mido = _fake_mido()
     m.STATE_FILE = str(state_file)
+    m.LOG_FILE = os.path.join(os.path.dirname(str(state_file)), 'log.jsonl')
     m.SOUND_DIR = os.path.join(os.path.dirname(str(state_file)), 'sounds')
     m.PLAYER = None                       # ding() becomes a no-op...
     m.time = clock                        # ...and the clock is ours

@@ -20,6 +20,8 @@ def state_file(tmp_path):
 def mod(state_file, clock):
     m = load_pomodoro(state_file, clock)
     assert m.STATE_FILE == str(state_file), 'test would have used the real state file'
+    assert str(tmp := m.LOG_FILE).startswith(os.path.dirname(str(state_file))), \
+        'test would have written to the real pomodoro log'
     return m
 
 

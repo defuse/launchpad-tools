@@ -25,9 +25,11 @@ numbers them. `·` off, `W` white, `G` green, `R` red, `B` blue, `Y` yellow,
  0   pomo daily weekly mach spec cpu net RESET
 ```
 
-The selected tab is sky blue, the rest white. The red pad on the right does two
-jobs: a tap opens or closes this tab's window, a two-second hold resets what the
-tab owns. The row fills red as you hold it.
+The selected tab is sky blue, the rest white. Two tabs pressed together reach a
+mode with no tab of its own — see Calendar — and both of them light magenta
+while it is showing. The red pad on the right does two jobs: a tap opens or
+closes this tab's window, a two-second hold resets what the tab owns. The row
+fills red as you hold it.
 
 ## Timers
 
@@ -76,6 +78,31 @@ it, once per second held. **Press** it to open the window, where you can rename
 habits, pick colours, drag them around, and double-click to cycle. A drag moves
 the whole habit, today's state included. Clearing a name removes a habit; the
 cell keeps its colour for the next one.
+
+## Calendar
+
+Hold the **pomo** tab and press **daily** — a chord, and while it is showing,
+both those tabs are magenta instead of one being sky blue.
+
+```
+ 1   B  B  B  ·  ·  ·  ·  ·     day bar
+ 2   ·  ·  ·  ·  ·  ·  1  C     the month, Sunday first · C = previous month
+ 3   2  3  4  5  6  7  8  C     · next month
+ 4   9 10 11 12 13 14 15  ·
+ 5  16 17 18 19 20 21 22  ·
+ 6  23 24 25 26 27 28 29  ·
+ 7  30 31  ·  ·  ·  ·  ·  S     · back to this month
+```
+
+Press a day to mark it red, press it again to clear it. Today is sky blue.
+Every other day is coloured by the pomodoros you claimed on it: white for none,
+greener as they add up, full green at eight, then on through to magenta at
+sixteen. A mark outranks today, which outranks the count.
+
+Finished timers are logged, one line each, to
+`~/.local/share/launchpad-pomodoro-log.jsonl` — claimed, written off, abandoned
+and elapsed, breaks as well as pomodoros. The calendar counts the claimed
+pomodoros; the rest is there to be read later.
 
 ## Machine and audio
 
@@ -148,7 +175,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (752 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (790 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every
