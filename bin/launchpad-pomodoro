@@ -385,8 +385,8 @@ BARS = {M_POMO: DAY, M_HAB: DAY, M_MACH: DAY, M_HAB2: WEEK, M_CAL: DAY}
 CAL_ROWS = [2, 3, 4, 5, 6, 7]
 CAL_DAYS = 7                               # columns 0..6 are Sun..Sat
 CAL_COL  = 7                               # ...and this one is the controls
-CAL_PREV, CAL_NEXT, CAL_TODAY = 2, 3, 7    # which row each control sits on
-CAL_CTRL = {CAL_PREV: CYAN, CAL_NEXT: CYAN, CAL_TODAY: SKY}
+CAL_PREV, CAL_NEXT = 2, 3                  # which row each control sits on
+CAL_CTRL = {CAL_PREV: CYAN, CAL_NEXT: CYAN}
 CAL_MARK = RED                             # a day you marked
 CAL_TODAY_COL = SKY                        # ...and the one you are in
 CAL_FULL = 8                               # pomodoros for a fully green day
@@ -1921,9 +1921,14 @@ class Board:
     def calendar_press(self, row, col):
         """A day toggles its mark; the eighth column gets you around."""
         if col == CAL_COL:
-            if   row == CAL_PREV:  self.cal_offset -= 1
+            # both at once is the way back to this month, on the same terms as
+            # the tab chord: it lands on the second press, so a single one is
+            # never held back waiting to find out whether another is coming
+            other = {CAL_PREV: CAL_NEXT, CAL_NEXT: CAL_PREV}.get(row)
+            if other is not None and pad(other, CAL_COL) in self.held:
+                self.cal_offset = 0
+            elif row == CAL_PREV:  self.cal_offset -= 1
             elif row == CAL_NEXT:  self.cal_offset += 1
-            elif row == CAL_TODAY: self.cal_offset = 0
             return
         cell = self.calendar_cells().get((row, col))
         if not cell:

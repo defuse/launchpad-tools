@@ -128,17 +128,49 @@ def test_the_navigation_column_is_the_eighth(cal, mod):
 
 
 @pytest.mark.parametrize('presses,month', [
-    ([mod_row := 'CAL_PREV'], (2026, 7)),
+    (['CAL_PREV'], (2026, 7)),
     (['CAL_NEXT'], (2026, 9)),
     (['CAL_PREV'] * 8, (2025, 12)),
     (['CAL_NEXT'] * 5, (2027, 1)),
     (['CAL_NEXT', 'CAL_PREV'], (2026, 8)),
-    (['CAL_PREV'] * 3 + ['CAL_TODAY'], (2026, 8)),
 ])
-def test_the_month_can_be_walked_and_come_back(cal, mod, presses, month):
+def test_the_month_can_be_walked(cal, mod, presses, month):
     for name in presses:
         cal.press(mod.pad(getattr(mod, name), mod.CAL_COL))
+        cal.release(mod.pad(getattr(mod, name), mod.CAL_COL))
     assert mod.month_at(cal.cal_offset, AUG) == month
+
+
+@pytest.mark.parametrize('first,second', [('CAL_PREV', 'CAL_NEXT'),
+                                          ('CAL_NEXT', 'CAL_PREV')])
+def test_both_nav_pads_at_once_come_back_to_this_month(cal, mod, first, second):
+    for _ in range(5):                                  # wander off
+        cal.press(mod.pad(mod.CAL_PREV, mod.CAL_COL))
+        cal.release(mod.pad(mod.CAL_PREV, mod.CAL_COL))
+    assert cal.cal_offset != 0
+    cal.press(mod.pad(getattr(mod, first), mod.CAL_COL))
+    cal.press(mod.pad(getattr(mod, second), mod.CAL_COL))
+    assert cal.cal_offset == 0, 'either order, on the second press'
+    cal.release(mod.pad(getattr(mod, second), mod.CAL_COL))
+    cal.release(mod.pad(getattr(mod, first), mod.CAL_COL))
+    assert cal.cal_offset == 0, 'and letting go changes nothing back'
+
+
+def test_one_nav_pad_still_steps_one_month(cal, mod):
+    """Nothing waits to see whether the other is coming: a single press moves
+    the month the moment it lands."""
+    cal.press(mod.pad(mod.CAL_NEXT, mod.CAL_COL))
+    assert mod.month_at(cal.cal_offset, AUG) == (2026, 9)
+
+
+def test_the_navigation_is_two_pads_and_no_more(cal, mod):
+    """A third one sat in the bottom right doing this same job, and a light
+    that needs explaining is worse than the gesture it saves."""
+    assert set(mod.CAL_CTRL) == {mod.CAL_PREV, mod.CAL_NEXT}
+    cal.render()
+    lit = cal.out.lit()
+    dark = [r for r in mod.CAL_ROWS if r not in mod.CAL_CTRL]
+    assert all(lit[mod.pad(r, mod.CAL_COL)] == mod.OFF for r in dark)
 
 
 def test_walking_months_marks_nothing(cal, mod):
