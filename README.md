@@ -179,7 +179,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (797 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (799 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every

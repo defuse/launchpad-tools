@@ -307,6 +307,22 @@ def test_no_log_at_all_is_not_an_error(mod, tmp_path):
 
 # ---- and the colour it becomes -------------------------------------------
 
+def test_a_couple_of_pomodoros_already_look_green(mod):
+    """A quarter of the way from white to green is barely off white, so two
+    used to read as none. The ramp is curved to spend itself early, where the
+    difference is hard to see."""
+    r, g, b = mod.day_colour(2)
+    assert r / g <= 0.55, f'two pomodoros came out {(r, g, b)}'
+    assert mod.day_colour(1)[0] / mod.day_colour(1)[1] <= 0.7, 'and one shows'
+
+
+def test_the_ramp_is_curved_not_straight(mod):
+    """Halfway up the count is more than halfway to green."""
+    half = mod.day_colour(mod.CAL_FULL // 2)
+    straight = mod.blend(mod.CAL_NONE, mod.CAL_DONE, 0.5)
+    assert half[0] < straight[0]
+
+
 def test_none_is_white_and_a_full_day_is_green(mod):
     assert mod.day_colour(0) == mod.CAL_NONE
     assert mod.day_colour(mod.CAL_FULL) == mod.CAL_DONE

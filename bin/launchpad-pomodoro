@@ -399,6 +399,11 @@ CAL_FULL = 8                               # pomodoros for a fully green day
 # ramp is RGB rather than palette entries: the palette has no smooth run
 # between those colours, and the whole point is to read the amount, not a state.
 CAL_NONE, CAL_DONE, CAL_OVER = (127, 127, 127), (0, 127, 0), (127, 0, 127)
+# ...and not in a straight line. A quarter of the way from white to green is
+# barely off white to look at, so two pomodoros read as none; the curve spends
+# more of the ramp early, where the difference is hard to see, and less at the
+# end, where it is not.
+CAL_CURVE = 0.5
 
 # Finished timers, one line each, appended and never rewritten. The calendar
 # counts them; nothing else reads them.
@@ -682,7 +687,10 @@ def day_colour(n):
     if n <= 0:
         return CAL_NONE
     if n <= CAL_FULL:
-        return blend(CAL_NONE, CAL_DONE, n / CAL_FULL)
+        return blend(CAL_NONE, CAL_DONE, (n / CAL_FULL) ** CAL_CURVE)
+    # the second ramp stays linear: green and magenta are opposites, so it
+    # passes through neutral wherever they cross, and curving it only moves
+    # that crossing earlier -- to 10 rather than 12
     return blend(CAL_DONE, CAL_OVER, (n - CAL_FULL) / CAL_FULL)
 
 
