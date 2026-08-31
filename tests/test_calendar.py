@@ -106,10 +106,37 @@ def test_a_six_week_month_still_fits(mod):
     assert longest == 6 and len(mod.CAL_ROWS) == 6
 
 
-def test_today_is_sky_blue(cal, mod):
-    cells = cal.calendar_cells(AUG)
-    today = [c for c in cells.values() if c[0] == '2026-08-27']
-    assert today and today[0][1] == mod.CAL_TODAY_COL
+def sky_phase(mod, base):
+    """A moment in each half of today's alternation, near `base`."""
+    lit = next(base + d / 10 for d in range(40)
+               if int((base + d / 10) / mod.CAL_TODAY_FLASH) % 2)
+    dark = next(base + d / 10 for d in range(40)
+                if not int((base + d / 10) / mod.CAL_TODAY_FLASH) % 2)
+    return lit, dark
+
+
+def today_colour(cal, when):
+    return next(v[1] for v in cal.calendar_cells(when).values()
+                if v[0] == '2026-08-27')
+
+
+def test_today_alternates_between_sky_and_its_own_state(cal, mod, tmp_path, monkeypatch):
+    """Sky says which day it is; the other half says how the day is going, so
+    the cell answers both questions without a second pad."""
+    monkeypatch.setattr(mod, 'LOG_FILE', str(tmp_path / 'log.jsonl'))
+    for _ in range(4):
+        mod.log_timer('pomodoro', 'claimed', when=AUG, path=mod.LOG_FILE)
+    cal._counts_at = None
+    lit, dark = sky_phase(mod, AUG)
+    assert today_colour(cal, lit) == mod.CAL_TODAY_COL
+    assert today_colour(cal, dark) == mod.day_colour(4)
+
+
+def test_a_day_that_is_not_today_does_not_flash(cal, mod):
+    lit, dark = sky_phase(mod, AUG)
+    other = lambda when: next(v[1] for v in cal.calendar_cells(when).values()
+                              if v[0] == '2026-08-12')
+    assert other(lit) == other(dark) == mod.day_colour(0)
 
 
 def test_days_outside_the_month_are_not_drawn(cal, mod):
@@ -211,13 +238,15 @@ def test_a_day_marks_and_unmarks(cal, mod):
     assert cal.marks == set()
 
 
-def test_a_mark_beats_today(cal, mod):
-    """Marking is deliberate, and a marked day should look the same whichever
-    day of the month it happens to be."""
+def test_a_marked_today_flashes_against_its_mark(cal, mod):
+    """Marking is deliberate, so it is what today shows between flashes --
+    the mark still outranks the count."""
     row, col = next(rc for rc, v in cal.calendar_cells(AUG).items()
                     if v[0] == '2026-08-27')
     cal.press(mod.pad(row, col))
-    assert cal.calendar_cells(AUG)[(row, col)][1] == mod.CAL_MARK
+    lit, dark = sky_phase(mod, AUG)
+    assert today_colour(cal, lit) == mod.CAL_TODAY_COL
+    assert today_colour(cal, dark) == mod.CAL_MARK
 
 
 def test_pressing_where_no_day_is_does_nothing(cal, mod):

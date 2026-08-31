@@ -95,10 +95,13 @@ both those tabs are magenta instead of one being sky blue.
 ```
 
 Both navigation pads together go back to this month. Press a day to mark it
-red, press it again to clear it. Today is sky blue.
-Every other day is coloured by the pomodoros you claimed on it: white for none,
+red, press it again to clear it.
+
+Every day is coloured by the pomodoros you claimed on it: white for none,
 greener as they add up, full green at eight, then on through to magenta at
-sixteen. A mark outranks today, which outranks the count.
+sixteen. Today alternates between sky blue and its own colour, so the cell says
+both which day it is and how the day is going. A mark outranks the count, and
+is what today shows between flashes.
 
 Finished timers are logged, one line each, to
 `~/.local/share/launchpad-pomodoro-log.jsonl` — claimed, written off, abandoned
@@ -176,7 +179,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (796 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (797 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every

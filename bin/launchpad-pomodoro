@@ -389,6 +389,11 @@ CAL_PREV, CAL_NEXT = 2, 3                  # which row each control sits on
 CAL_CTRL = {CAL_PREV: CYAN, CAL_NEXT: CYAN}
 CAL_MARK = RED                             # a day you marked
 CAL_TODAY_COL = SKY                        # ...and the one you are in
+# Today alternates between that sky blue and whatever it would otherwise be
+# wearing, so the cell says both which day it is and how the day is going. Slow
+# and even, because both halves are meant to be read rather than noticed -- the
+# habit tab's 0.3s alternation is for something in progress, which this is not.
+CAL_TODAY_FLASH = 1.0                      # seconds per half
 CAL_FULL = 8                               # pomodoros for a fully green day
 # 0 is white and 8 is green; past that it keeps going, to magenta at 16. The
 # ramp is RGB rather than palette entries: the palette has no smooth run
@@ -1903,9 +1908,13 @@ class Board:
                 if not day:
                     continue                       # padding, another month
                 iso = f'{year:04d}-{month:02d}-{day:02d}'
-                if iso in self.marks:      colour = CAL_MARK
-                elif iso == today:         colour = CAL_TODAY_COL
-                else:                      colour = day_colour(counts.get(iso, 0))
+                # what the day is worth, before today gets a say
+                state = (CAL_MARK if iso in self.marks
+                         else day_colour(counts.get(iso, 0)))
+                if iso == today and int(now / CAL_TODAY_FLASH) % 2:
+                    colour = CAL_TODAY_COL
+                else:
+                    colour = state
                 cells[(r, c)] = (iso, colour)
         return cells
 
