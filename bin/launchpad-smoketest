@@ -67,6 +67,17 @@ for fn, args in (('cycle_state', (2, 0)), ('edit_habit', (2, 0)), ('reset', ()),
     try: getattr(board, fn)(*args)
     except Exception as e: fails.append(f'Board.{fn}: {e!r}')
 
+# every window program at least parses and defines what the board addresses
+for name, wants in (('machine-popup', ('Grid',)), ('pomo-popup', ('Window',)),
+                    ('cal-popup', ('Window', 'ramp'))):
+    try:
+        w = load(os.path.expanduser(f'~/.local/bin/{name}'))
+        for attr in wants:
+            if not hasattr(w, attr):
+                fails.append(f'{name}: no {attr}')
+    except Exception as e:
+        fails.append(f'{name}: {e!r}')
+
 display = os.environ.get('DISPLAY', '')
 if display.split('.')[0] in (':0', ':0.0'):
     # opening a topmost window on the live desktop is not a smoke test

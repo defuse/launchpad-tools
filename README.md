@@ -111,6 +111,13 @@ state, so a day walked all the way round is stored as nothing at all.
 The two modes never show each other's days: red means a mark in one and a
 failed day in the other.
 
+**Tap the red pad** for a window showing the month with *both* modes at once —
+each day's pomodoro count and how its fast went, which eight columns of pads
+have no room to say together. It follows the board: walk the months there and
+it walks here. Underneath, two sets of sums — the month so far, and the last
+seven days whatever month is on screen. The month's average is over the days
+that have actually happened, so three days in is an average over three days.
+
 Finished timers are logged, one line each, to
 `~/.local/share/launchpad-pomodoro-log.jsonl` — claimed, written off, abandoned
 and elapsed, breaks as well as pomodoros. The calendar counts the claimed
@@ -187,7 +194,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (813 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (831 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every

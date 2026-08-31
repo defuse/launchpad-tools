@@ -71,7 +71,7 @@ The point is that starting costs one press with no decisions, and the row
 state is readable from across the room without reading anything.
 """
 import mido, time, sys, json, os, threading, subprocess, shutil, signal, enum, re, glob
-import calendar
+import calendar, datetime
 try:
     import numpy as np                     # spectrum tab only; the rest runs without
 except ImportError:
@@ -166,6 +166,7 @@ HAB_ROWS = [2, 3, 4, 5, 6, 7]
 HOLD_CYCLE  = 1.0         # hold this long to advance a habit's state
 POPUP = os.path.expanduser('~/.local/bin/habit-popup')
 MACHINE_POPUP = os.path.expanduser('~/.local/bin/machine-popup')
+CAL_POPUP = os.path.expanduser('~/.local/bin/cal-popup')
 POMO_POPUP = os.path.expanduser('~/.local/bin/pomo-popup')
 # What the pads are showing, in CSS, for the window that mirrors them
 PAD_HEX = {OFF: '#191920', WHITE: '#e8e8e8', GREEN: '#33d17a', RED: '#ff4444',
@@ -714,6 +715,33 @@ def month_weeks(year, month):
     either convention.
     """
     return calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
+
+
+def days_so_far(year, month, now=None):
+    """The days of that month that have actually happened.
+
+    An average over a month you are three days into should be an average over
+    three days, not over thirty-one with twenty-eight zeroes in it.
+    """
+    now = time.time() if now is None else now
+    t = time.localtime(now)
+    if (year, month) > (t.tm_year, t.tm_mon):
+        return []                                  # a month that has not begun
+    last = (t.tm_mday if (year, month) == (t.tm_year, t.tm_mon)
+            else calendar.monthrange(year, month)[1])
+    return [f'{year:04d}-{month:02d}-{d:02d}' for d in range(1, last + 1)]
+
+
+def last_days(n, now=None):
+    """The n days ending today, oldest first.
+
+    Date arithmetic rather than subtracting 86400 seconds: an hour of daylight
+    saving would otherwise repeat a day or skip one, twice a year.
+    """
+    now = time.time() if now is None else now
+    today = datetime.date.fromtimestamp(now)
+    return [(today - datetime.timedelta(days=i)).isoformat()
+            for i in range(n - 1, -1, -1)]
 
 
 def month_at(offset, now=None):
@@ -1331,6 +1359,8 @@ class Board:
         self._hold_count = {}                  # note -> cycles already fired while held
         self._popup = None                     # resident peek window (daemon)
         self._machine_popup = None             # ...and the machine one
+        self._cal_popup = None                 # ...and the calendar one
+        self._cal_sent = None                  # the last frame it was given
         self._machine_sent = None              # the last frame it was given
         self._pomo_popup = None                # ...and the pomodoro one
         self._pomo_sent = None                 # the last frame it was sent
@@ -1859,6 +1889,75 @@ class Board:
                     self.control_colour(b, snap), words[2])
         return cells
 
+    def _cal_cmd(self, line):
+        """Talk to the calendar window, starting it if it is not there."""
+        if not self._cal_popup or self._cal_popup.poll() is not None:
+            try:
+                env = dict(os.environ)
+                env.setdefault('DISPLAY', ':0')
+                self._cal_sent = None          # a new process knows nothing
+                self._cal_popup = subprocess.Popen(
+                    [CAL_POPUP], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                    text=True, env=env, bufsize=1)
+            except Exception:
+                self._cal_popup = None
+                return
+        try:
+            self._cal_popup.stdin.write(line + '\n')
+            self._cal_popup.stdin.flush()
+        except Exception:
+            self._cal_popup = None
+
+    def cal_stats(self, days, counts, label):
+        """What a run of days came to: pomodoros a day, and how the fasts fell."""
+        states = [self.fasts.get(d, FAST_NONE) for d in days]
+        pomos = sum(counts.get(d, 0) for d in days)
+        return {'label': label, 'days': len(days), 'pomos': pomos,
+                'avg': pomos / len(days) if days else 0.0,
+                'green': states.count(FAST_OK),
+                'yellow': states.count(FAST_NONE),
+                'red': states.count(FAST_FAIL)}
+
+    def cal_window_data(self, now=None):
+        """The month as the window shows it: both modes at once, and the sums.
+
+        Both, because the board can only ever draw one of them -- eight columns
+        of pads have no room to say a day had four pomodoros AND that the fast
+        went badly, and that is the whole reason this window exists.
+        """
+        now = time.time() if now is None else now
+        year, month = month_at(self.cal_offset, now)
+        today = time.strftime('%Y-%m-%d', time.localtime(now))
+        counts = self.counts()
+        weeks = []
+        for week in month_weeks(year, month):
+            row = []
+            for day in week[:CAL_DAYS]:
+                if not day:
+                    row.append(None)
+                    continue
+                iso = f'{year:04d}-{month:02d}-{day:02d}'
+                row.append({'day': day, 'iso': iso, 'pomos': counts.get(iso, 0),
+                            'fast': self.fasts.get(iso, FAST_NONE),
+                            'mark': iso in self.marks, 'today': iso == today})
+            weeks.append(row)
+        return {
+            'title': f'{calendar.month_name[month]} {year}',
+            'weeks': weeks,
+            'month': self.cal_stats(days_so_far(year, month, now), counts,
+                                    f'{calendar.month_name[month]} so far'),
+            # the last seven days whatever month is on screen: the point of it
+            # is what you have been doing lately, not what this page shows
+            'week': self.cal_stats(last_days(7, now), counts, 'the last 7 days'),
+        }
+
+    def _cal_send(self):
+        """Push the month, if it has changed since the last one sent."""
+        blob = json.dumps(self.cal_window_data())
+        if blob != self._cal_sent:
+            self._cal_cmd('data\t' + blob)     # recorded after the write: sending
+            self._cal_sent = blob              # is what starts the process
+
     def _machine_send(self):
         """Push what the rows are showing, if it has changed since last time.
 
@@ -1962,6 +2061,8 @@ class Board:
         is the dedupe working exactly as it should on two contradictory
         instructions.
         """
+        if self._window == M_CAL:
+            self._cal_send()                   # the month here follows the pads
         cells = self.calendar_cells()
         for r in CAL_ROWS:
             for c in range(CELLS):
@@ -2562,6 +2663,11 @@ class Board:
             # no cell named: a peek marks the pad being held, and this was not
             # a peek. Nothing is being pointed at, so nothing is outlined
             self._machine_cmd('show')
+        elif self.mode == M_CAL:
+            self._window, self._cal_sent = M_CAL, None
+            self._cal_send()
+            self._cal_cmd('show')
+            return
         else:
             return                               # nothing to show for a meter
         self._window = self.mode
@@ -2573,6 +2679,8 @@ class Board:
             self._editing = None
         elif was == M_MACH:
             self._machine_cmd('hide')
+        elif was == M_CAL:
+            self._cal_cmd('hide')
         elif was == M_POMO:
             self._pomo_cmd('hide')
 
