@@ -88,20 +88,28 @@ both those tabs are magenta instead of one being sky blue.
  1   B  B  B  ·  ·  ·  ·  ·     day bar
  2   ·  ·  ·  ·  ·  ·  1  C     the month, Sunday first · C = previous month
  3   2  3  4  5  6  7  8  C     · next month
- 4   9 10 11 12 13 14 15  ·
- 5  16 17 18 19 20 21 22  ·
- 6  23 24 25 26 27 28 29  ·
- 7  30 31  ·  ·  ·  ·  ·  ·
+ 4   9 10 11 12 13 14 15  G     · pomodoros
+ 5  16 17 18 19 20 21 22  Y     · fasting
+ 6  23 24 25 26 27 28 29  ·     · (unused)
+ 7  30 31  ·  ·  ·  ·  ·  ·     · (unused)
 ```
 
-Both navigation pads together go back to this month. Press a day to mark it
-red, press it again to clear it.
+Both navigation pads together go back to this month. The four pads under them
+choose how the month is read; the selected one is lit and the others are dim.
+Today alternates between sky blue and whatever it would otherwise wear, in
+every mode, so the cell says both which day it is and how the day is going.
 
-Every day is coloured by the pomodoros you claimed on it: white for none,
-greener as they add up, full green at eight, then on through to magenta at
-sixteen. Today alternates between sky blue and its own colour, so the cell says
-both which day it is and how the day is going. A mark outranks the count, and
-is what today shows between flashes.
+**Pomodoros.** Every day is coloured by the ones you claimed on it: white for
+none, greener as they add up, full green at eight, then on through to magenta
+at sixteen. Press a day to mark it red, press it again to clear it; a mark
+outranks the count.
+
+**Fasting.** Every day starts yellow. Pressing walks it yellow → green (went
+well) → red (did not) → yellow. Yellow is the absence of a state rather than a
+state, so a day walked all the way round is stored as nothing at all.
+
+The two modes never show each other's days: red means a mark in one and a
+failed day in the other.
 
 Finished timers are logged, one line each, to
 `~/.local/share/launchpad-pomodoro-log.jsonl` — claimed, written off, abandoned
@@ -179,7 +187,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (799 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (813 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every

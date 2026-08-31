@@ -387,6 +387,13 @@ CAL_DAYS = 7                               # columns 0..6 are Sun..Sat
 CAL_COL  = 7                               # ...and this one is the controls
 CAL_PREV, CAL_NEXT = 2, 3                  # which row each control sits on
 CAL_CTRL = {CAL_PREV: CYAN, CAL_NEXT: CYAN}
+# ...and under them, one button per way of reading the month. Four slots; the
+# ones with no mode behind them stay dark and do nothing, rather than being
+# hidden -- the column is the same shape however many modes there are.
+CAL_MODE_ROWS = [4, 5, 6, 7]
+CAL_POMO, CAL_FAST = 0, 1                  # in button order, top to bottom
+CAL_MODE_BTN = {CAL_POMO: (0, 127, 0), CAL_FAST: (127, 105, 0)}
+CAL_MODE_DIM = 0.22                        # what an unselected button is worth
 CAL_MARK = RED                             # a day you marked
 CAL_TODAY_COL = SKY                        # ...and the one you are in
 # Today alternates between that sky blue and whatever it would otherwise be
@@ -399,6 +406,11 @@ CAL_FULL = 8                               # pomodoros for a fully green day
 # ramp is RGB rather than palette entries: the palette has no smooth run
 # between those colours, and the whole point is to read the amount, not a state.
 CAL_NONE, CAL_DONE, CAL_OVER = (127, 127, 127), (0, 127, 0), (127, 0, 127)
+# Fasting: every day starts yellow and a press walks it round. Yellow is a day
+# with nothing said about it rather than a day that went badly, which is why it
+# is the one you land back on.
+FAST_NONE, FAST_OK, FAST_FAIL = 0, 1, 2
+FAST_COLOURS = {FAST_NONE: YELLOW, FAST_OK: GREEN, FAST_FAIL: RED}
 # ...and not in a straight line. A quarter of the way from white to green is
 # barely off white to look at, so two pomodoros read as none; the curve spends
 # more of the ramp early, where the difference is hard to see, and less at the
@@ -1304,6 +1316,8 @@ class Board:
         self.todo = blank_todo()               # eight slots: name and state
         self._todo_edit = 0                    # the window's last edit applied
         self.marks = set()                     # days you marked, as YYYY-MM-DD
+        self.fasts = {}                        # day -> FAST_OK | FAST_FAIL
+        self.cal_mode = CAL_POMO               # which way the month is read
         self.cal_offset = 0                    # months from this one; not saved
         self._counts, self._counts_at = {}, None   # the log, and what it was
         # note -> (time it went down, mode it was pressed in). The MODE MATTERS:
@@ -1582,6 +1596,9 @@ class Board:
             # press aimed at a habit landed on a pomodoro row instead, and on an
             # elapsed row that press means "failed" -- it wiped the timer.
             self.marks = set(d.get('marks') or ())
+            self.fasts = {k: int(v) for k, v in (d.get('fasts') or {}).items()}
+            if d.get('cal_mode') in CAL_MODE_BTN:
+                self.cal_mode = d['cal_mode']
             # a chord mode is a mode like any other and comes back the same way
             if d.get('mode') in TABS or d.get('mode') in CHORD_TABS:
                 self.mode = d['mode']
@@ -1636,6 +1653,8 @@ class Board:
                                    'todo': self.todo,
                                    'habit_sets': self.habit_sets,
                                    'marks': sorted(self.marks),
+                                   'fasts': self.fasts,
+                                   'cal_mode': self.cal_mode,
                                    'mode': self.mode,
                                    'schema': 3})
             tmp = STATE_FILE + '.tmp'
@@ -1900,25 +1919,33 @@ class Board:
             self._counts = read_counts()
         return self._counts
 
-    def calendar_cells(self, now=None):
-        """(row, col) -> (day string, colour) for the month being shown.
+    def day_state(self, iso, counts):
+        """What a day is wearing, before today gets a say.
 
-        Marked beats today beats the count: marking is something you did on
-        purpose, and a day you marked should look the same whichever day it is.
+        One mode per way of reading the month: the pomodoro one colours by what
+        you claimed and lets you mark days, the fasting one holds a state you
+        set by hand. Neither shows the other's -- a red day means a mark in one
+        and a failed day in the other, and they should not be on screen at once.
         """
+        if self.cal_mode == CAL_FAST:
+            return FAST_COLOURS[self.fasts.get(iso, FAST_NONE)]
+        if iso in self.marks:
+            return CAL_MARK
+        return day_colour(counts.get(iso, 0))
+
+    def calendar_cells(self, now=None):
+        """(row, col) -> (day string, colour) for the month being shown."""
         now = time.time() if now is None else now
         year, month = month_at(self.cal_offset, now)
         today = time.strftime('%Y-%m-%d', time.localtime(now))
-        counts = self.counts()
+        counts = self.counts() if self.cal_mode == CAL_POMO else {}
         cells = {}
         for r, week in zip(CAL_ROWS, month_weeks(year, month)):
             for c, day in enumerate(week[:CAL_DAYS]):
                 if not day:
                     continue                       # padding, another month
                 iso = f'{year:04d}-{month:02d}-{day:02d}'
-                # what the day is worth, before today gets a say
-                state = (CAL_MARK if iso in self.marks
-                         else day_colour(counts.get(iso, 0)))
+                state = self.day_state(iso, counts)
                 if iso == today and int(now / CAL_TODAY_FLASH) % 2:
                     colour = CAL_TODAY_COL
                 else:
@@ -1940,14 +1967,32 @@ class Board:
             for c in range(CELLS):
                 if c == CAL_COL:
                     colour = CAL_CTRL.get(r, OFF)
+                    mode = self.mode_at(r)
+                    if mode is not None:
+                        full = CAL_MODE_BTN[mode]
+                        colour = (full if mode == self.cal_mode
+                                  else tuple(round(v * CAL_MODE_DIM) for v in full))
                 else:
                     cell = cells.get((r, c))
                     colour = cell[1] if cell else OFF
                 self.set(pad(r, c), colour)
 
+    def mode_at(self, row):
+        """The calendar mode that button sits on, or None for an empty slot."""
+        if row in CAL_MODE_ROWS:
+            i = CAL_MODE_ROWS.index(row)
+            if i in CAL_MODE_BTN:
+                return i
+        return None
+
     def calendar_press(self, row, col):
-        """A day toggles its mark; the eighth column gets you around."""
+        """A day changes what it says; the eighth column gets you around."""
         if col == CAL_COL:
+            mode = self.mode_at(row)
+            if mode is not None:
+                self.cal_mode = mode
+                self.save()
+                return
             # both at once is the way back to this month, on the same terms as
             # the tab chord: it lands on the second press, so a single one is
             # never held back waiting to find out whether another is coming
@@ -1961,7 +2006,14 @@ class Board:
         if not cell:
             return                                 # padding: no day there
         iso = cell[0]
-        self.marks.symmetric_difference_update({iso})
+        if self.cal_mode == CAL_FAST:
+            state = (self.fasts.get(iso, FAST_NONE) + 1) % len(FAST_COLOURS)
+            if state == FAST_NONE:
+                self.fasts.pop(iso, None)          # back to nothing said
+            else:
+                self.fasts[iso] = state
+        else:
+            self.marks.symmetric_difference_update({iso})
         self.save()
 
     def alarm(self, p, colour=RED):

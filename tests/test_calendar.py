@@ -192,12 +192,135 @@ def test_one_nav_pad_still_steps_one_month(cal, mod):
 
 def test_the_navigation_is_two_pads_and_no_more(cal, mod):
     """A third one sat in the bottom right doing this same job, and a light
-    that needs explaining is worse than the gesture it saves."""
+    that needs explaining is worse than the gesture it saves. What is down
+    there now switches modes, which is a different question."""
     assert set(mod.CAL_CTRL) == {mod.CAL_PREV, mod.CAL_NEXT}
+    assert not set(mod.CAL_CTRL) & set(mod.CAL_MODE_ROWS)
+
+
+# ---- the mode buttons -----------------------------------------------------
+
+def test_four_stacked_buttons_under_the_navigation(cal, mod):
+    assert mod.CAL_MODE_ROWS == [4, 5, 6, 7]
+    assert all(r > max(mod.CAL_CTRL) for r in mod.CAL_MODE_ROWS)
+
+
+def test_an_empty_slot_is_dark_and_does_nothing(cal, mod):
+    """Four slots and two modes: the column keeps its shape, and the pads with
+    nothing behind them say so."""
     cal.render()
     lit = cal.out.lit()
-    dark = [r for r in mod.CAL_ROWS if r not in mod.CAL_CTRL]
-    assert all(lit[mod.pad(r, mod.CAL_COL)] == mod.OFF for r in dark)
+    empty = [r for r in mod.CAL_MODE_ROWS if cal.mode_at(r) is None]
+    assert empty, 'this test is meaningless once all four are used'
+    for r in empty:
+        assert lit[mod.pad(r, mod.CAL_COL)] == mod.OFF
+        before = (cal.cal_mode, dict(cal.fasts), set(cal.marks))
+        cal.press(mod.pad(r, mod.CAL_COL))
+        assert (cal.cal_mode, dict(cal.fasts), set(cal.marks)) == before
+
+
+@pytest.mark.parametrize('slot,mode', [(0, 'CAL_POMO'), (1, 'CAL_FAST')])
+def test_each_button_selects_its_mode(cal, mod, slot, mode):
+    cal.press(mod.pad(mod.CAL_MODE_ROWS[slot], mod.CAL_COL))
+    assert cal.cal_mode == getattr(mod, mode)
+
+
+def test_the_selected_button_is_the_bright_one(cal, mod):
+    for mode in (mod.CAL_POMO, mod.CAL_FAST):
+        cal.cal_mode = mode
+        cal.shown.clear(); cal.render()
+        lit = cal.out.lit()
+        for i, row in enumerate(mod.CAL_MODE_ROWS):
+            if i not in mod.CAL_MODE_BTN:
+                continue
+            got = lit[mod.pad(row, mod.CAL_COL)]
+            if i == mode:
+                assert got == mod.CAL_MODE_BTN[i]
+            else:
+                assert sum(got) < sum(mod.CAL_MODE_BTN[i]), 'dimmed, not off'
+                assert sum(got) > 0
+
+
+def test_the_mode_survives_a_restart(mod, seed, out):
+    seed(mode=mod.M_CAL, cal_mode=mod.CAL_FAST, fasts={'2026-08-12': 1})
+    b = new_board(mod, out)
+    assert b.cal_mode == mod.CAL_FAST and b.fasts == {'2026-08-12': 1}
+
+
+# ---- fasting --------------------------------------------------------------
+
+@pytest.fixture
+def fast(cal, mod):
+    cal.cal_mode = mod.CAL_FAST
+    return cal
+
+
+def day(cal, iso, when=AUG):
+    return next(rc for rc, v in cal.calendar_cells(when).items() if v[0] == iso)
+
+
+def test_every_day_starts_yellow(fast, mod):
+    cells = fast.calendar_cells(AUG)
+    said = [v[1] for k, v in cells.items() if v[0] != '2026-08-27']
+    assert set(said) == {mod.YELLOW}
+
+
+def test_pressing_walks_yellow_green_red_and_back(fast, mod):
+    rc = day(fast, '2026-08-12')
+    for want in (mod.GREEN, mod.RED, mod.YELLOW, mod.GREEN):
+        fast.press(mod.pad(*rc))
+        assert fast.calendar_cells(AUG)[rc][1] == want
+
+
+def test_nothing_said_is_not_stored(fast, mod):
+    """Yellow is the absence of a state, not a state -- otherwise every day you
+    ever tapped twice would sit in the file forever."""
+    rc = day(fast, '2026-08-12')
+    for _ in range(3):
+        fast.press(mod.pad(*rc))
+    assert fast.fasts == {}
+
+
+def test_today_still_flashes_against_its_fasting_state(fast, mod):
+    rc = day(fast, '2026-08-27')
+    fast.press(mod.pad(*rc))                       # today: fasted
+    lit, dark = sky_phase(mod, AUG)
+    assert today_colour(fast, lit) == mod.CAL_TODAY_COL
+    assert today_colour(fast, dark) == mod.GREEN
+
+
+def test_the_two_modes_do_not_show_each_other(cal, mod):
+    """Red means a mark in one and a failed day in the other; both on screen at
+    once would mean neither."""
+    rc = day(cal, '2026-08-12')
+    cal.press(mod.pad(*rc))                        # a mark, in pomodoro mode
+    cal.cal_mode = mod.CAL_FAST
+    assert cal.calendar_cells(AUG)[rc][1] == mod.YELLOW
+    cal.press(mod.pad(*rc))                        # a fast, in fasting mode
+    cal.cal_mode = mod.CAL_POMO
+    assert cal.calendar_cells(AUG)[rc][1] == mod.CAL_MARK
+    assert cal.marks == {'2026-08-12'} and cal.fasts == {'2026-08-12': mod.FAST_OK}
+
+
+def test_switching_modes_changes_no_day(fast, mod):
+    rc = day(fast, '2026-08-12')
+    fast.press(mod.pad(*rc))
+    before = dict(fast.fasts)
+    for m in (mod.CAL_POMO, mod.CAL_FAST, mod.CAL_POMO):
+        fast.press(mod.pad(mod.CAL_MODE_ROWS[m], mod.CAL_COL))
+    assert fast.fasts == before
+
+
+def test_the_month_still_walks_in_fasting_mode(fast, mod):
+    fast.press(mod.pad(mod.CAL_NEXT, mod.CAL_COL))
+    assert mod.month_at(fast.cal_offset, AUG) == (2026, 9)
+
+
+def test_fasting_is_still_silent_when_nothing_changes(fast, mod):
+    fast.render()
+    fast.out.sent.clear()
+    fast.render()
+    assert fast.out.sent == []
 
 
 def test_a_frame_that_changes_nothing_sends_nothing(cal, mod):
