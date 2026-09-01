@@ -63,13 +63,15 @@ def ramp(n):
     none, green at eight, magenta at sixteen."""
     if n <= 0:
         return DIM
-    f = min(n, 8) / 8
     if n <= 8:
-        f = f ** 0.5
+        f = (n / 8) ** 0.5
         r, g, b = round(255 * (1 - f)), 255, round(255 * (1 - f))
     else:
+        # past a full day it leaves green rather than blending out of it, or
+        # the first steps past eight look like less green than eight
         f = (min(n, 16) - 8) / 8
-        r, g, b = round(255 * f), round(255 * (1 - f)), round(255 * f)
+        v = round(112 + (255 - 112) * f)
+        r, g, b = v, 0, v
     return f'#{r:02x}{g:02x}{b:02x}'
 
 

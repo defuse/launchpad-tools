@@ -407,6 +407,12 @@ CAL_FULL = 8                               # pomodoros for a fully green day
 # ramp is RGB rather than palette entries: the palette has no smooth run
 # between those colours, and the whole point is to read the amount, not a state.
 CAL_NONE, CAL_DONE, CAL_OVER = (127, 127, 127), (0, 127, 0), (127, 0, 127)
+# Past a full day the colour LEAVES green rather than blending out of it: a
+# blend from green to magenta spends its first few steps looking like less
+# green, so nine pomodoros read as fewer than eight. Magenta from there,
+# brightening with the count -- an unmistakable change of category at eight,
+# and brightness for the amount, which is what LEDs show best.
+CAL_OVER_LOW = (56, 0, 56)
 # Fasting: every day starts yellow and a press walks it round. Yellow is a day
 # with nothing said about it rather than a day that went badly, which is why it
 # is the one you land back on.
@@ -701,10 +707,7 @@ def day_colour(n):
         return CAL_NONE
     if n <= CAL_FULL:
         return blend(CAL_NONE, CAL_DONE, (n / CAL_FULL) ** CAL_CURVE)
-    # the second ramp stays linear: green and magenta are opposites, so it
-    # passes through neutral wherever they cross, and curving it only moves
-    # that crossing earlier -- to 10 rather than 12
-    return blend(CAL_DONE, CAL_OVER, (n - CAL_FULL) / CAL_FULL)
+    return blend(CAL_OVER_LOW, CAL_OVER, (n - CAL_FULL) / CAL_FULL)
 
 
 def month_weeks(year, month):

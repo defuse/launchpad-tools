@@ -456,10 +456,42 @@ def test_it_greens_all_the_way_up_and_then_goes_magenta(mod):
     distinguishable from a full one rather than both being 'green'."""
     ramp = [mod.day_colour(n) for n in range(0, 2 * mod.CAL_FULL + 1)]
     assert len(set(ramp)) == len(ramp), 'every count looks different'
-    reds = [c[0] for c in ramp]
-    assert reds[:mod.CAL_FULL + 1] == sorted(reds[:mod.CAL_FULL + 1], reverse=True)
-    assert reds[mod.CAL_FULL:] == sorted(reds[mod.CAL_FULL:]), 'and back up to magenta'
     assert mod.day_colour(2 * mod.CAL_FULL) == mod.CAL_OVER
+
+
+def test_past_a_full_day_it_leaves_green_rather_than_fading_out_of_it(mod):
+    """Blending green to magenta spends its first steps looking like LESS
+    green, so nine pomodoros read as fewer than eight -- the count goes up and
+    the cell looks like it went down."""
+    for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1):
+        r, g, b = mod.day_colour(n)
+        assert g == 0, f'{n} still has green in it: {(r, g, b)}'
+        assert r == b > 0, 'magenta: red and blue together, nothing else'
+
+
+def test_and_brightens_from_there(mod):
+    """Brightness carries the amount up there, which is what LEDs show best."""
+    over = [mod.day_colour(n)[0] for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1)]
+    assert over == sorted(over) and len(set(over)) == len(over)
+    assert over[0] > 48, 'the first step past a full day is visible, not near-black'
+
+
+def test_the_step_at_a_full_day_is_a_change_of_category(mod):
+    """Deliberately a discontinuity: it is what makes nine impossible to read
+    as fewer than eight."""
+    assert mod.day_colour(mod.CAL_FULL) == mod.CAL_DONE
+    nine = mod.day_colour(mod.CAL_FULL + 1)
+    assert nine[1] == 0 and mod.CAL_DONE[1] == 127, 'green to none of it'
+
+
+def test_the_window_ramp_makes_the_same_break(mod):
+    """The window draws the same counts and must not disagree about this."""
+    from lpharness import load_popup
+    win = load_popup('cal-popup')
+    for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1):
+        hexed = win.ramp(n)
+        r, g, b = (int(hexed[i:i + 2], 16) for i in (1, 3, 5))
+        assert g == 0 and r == b > 0, f'window disagrees at {n}: {hexed}'
 
 
 def test_more_than_sixteen_does_not_wrap_back_to_white(mod):
