@@ -462,18 +462,26 @@ def test_it_greens_all_the_way_up_and_then_goes_magenta(mod):
 def test_past_a_full_day_it_leaves_green_rather_than_fading_out_of_it(mod):
     """Blending green to magenta spends its first steps looking like LESS
     green, so nine pomodoros read as fewer than eight -- the count goes up and
-    the cell looks like it went down."""
+    the cell looks like it went down. Nothing up here has any green in it."""
     for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1):
         r, g, b = mod.day_colour(n)
         assert g == 0, f'{n} still has green in it: {(r, g, b)}'
-        assert r == b > 0, 'magenta: red and blue together, nothing else'
+        assert b > 0, 'blue all the way along, red rising across it'
 
 
-def test_and_brightens_from_there(mod):
-    """Brightness carries the amount up there, which is what LEDs show best."""
-    over = [mod.day_colour(n)[0] for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1)]
-    assert over == sorted(over) and len(set(over)) == len(over)
-    assert over[0] > 48, 'the first step past a full day is visible, not near-black'
+def test_and_sweeps_from_blue_to_magenta(mod):
+    over = [mod.day_colour(n) for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1)]
+    reds = [c[0] for c in over]
+    assert reds == sorted(reds) and len(set(reds)) == len(reds), 'red rises'
+    assert {c[2] for c in over} == {mod.CAL_OVER_LOW[2]}, 'blue holds'
+    assert over[-1] == mod.CAL_OVER, 'magenta at the top'
+
+
+def test_the_deep_blue_is_not_the_day_bar_blue(mod):
+    """They sit one row apart on this tab, so they had better not match."""
+    assert mod.CAL_OVER_LOW != mod.PAD_HEX.get(mod.BLUE)
+    r, g, b = mod.CAL_OVER_LOW
+    assert (r, g) == (0, 0) and b == 127, 'saturated, not the bar\'s periwinkle'
 
 
 def test_the_step_at_a_full_day_is_a_change_of_category(mod):
@@ -491,7 +499,8 @@ def test_the_window_ramp_makes_the_same_break(mod):
     for n in range(mod.CAL_FULL + 1, 2 * mod.CAL_FULL + 1):
         hexed = win.ramp(n)
         r, g, b = (int(hexed[i:i + 2], 16) for i in (1, 3, 5))
-        assert g == 0 and r == b > 0, f'window disagrees at {n}: {hexed}'
+        assert g == 0 and b == 255, f'window disagrees at {n}: {hexed}'
+        assert abs(r / 255 - mod.day_colour(n)[0] / 127) < 0.02, f'at {n}: {hexed}'
 
 
 def test_more_than_sixteen_does_not_wrap_back_to_white(mod):

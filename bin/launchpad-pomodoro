@@ -409,10 +409,11 @@ CAL_FULL = 8                               # pomodoros for a fully green day
 CAL_NONE, CAL_DONE, CAL_OVER = (127, 127, 127), (0, 127, 0), (127, 0, 127)
 # Past a full day the colour LEAVES green rather than blending out of it: a
 # blend from green to magenta spends its first few steps looking like less
-# green, so nine pomodoros read as fewer than eight. Magenta from there,
-# brightening with the count -- an unmistakable change of category at eight,
-# and brightness for the amount, which is what LEDs show best.
-CAL_OVER_LOW = (56, 0, 56)
+# green, so nine pomodoros read as fewer than eight. Blue from there through to
+# magenta -- an unmistakable change of category at eight, and a hue sweep with
+# no green anywhere in it, so nothing up here can be mistaken for less. Deeper
+# and more saturated than the day bar's blue, which is a pale periwinkle.
+CAL_OVER_LOW = (0, 0, 127)
 # Fasting: every day starts yellow and a press walks it round. Yellow is a day
 # with nothing said about it rather than a day that went badly, which is why it
 # is the one you land back on.

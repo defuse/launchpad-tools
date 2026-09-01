@@ -101,7 +101,7 @@ every mode, so the cell says both which day it is and how the day is going.
 
 **Pomodoros.** Every day is coloured by the ones you claimed on it: white for
 none, greener as they add up, full green at eight. Past that it leaves green
-altogether and runs from a dim magenta to a bright one at sixteen — a change of
+altogether and sweeps from a deep blue to magenta at sixteen — a change of
 category rather than a blend, because fading green into magenta spends its
 first steps looking like *less* green, and nine would read as fewer than eight.
 Press a day to mark it red, press it again to clear it; a mark outranks the
@@ -197,7 +197,7 @@ itself up within a few seconds.
 
 ## Tests
 
-`tests/run-tests` (835 of them, about fifty seconds; pytest args pass through).
+`tests/run-tests` (836 of them, about fifty seconds; pytest args pass through).
 Safe against a live session: the real state file is never opened, MIDI and audio
 are stubbed, the window tests get a private Xvfb, the service is never touched.
 `bin/launchpad-smoketest` is a faster dependency-free version that calls every
