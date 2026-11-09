@@ -102,7 +102,7 @@ TICK = 0.05
 # The spectrum runs faster than the rest of the board. Everything else changes
 # on a human timescale -- a pomodoro cell every three minutes, a CPU column a
 # few times a second -- but audio does not, and 20fps visibly smears it.
-# Measured: pw-record delivers fresh samples at 96Hz, analysing them costs
+# Measured: the capture delivers fresh samples at 96Hz, analysing them costs
 # 0.10ms and drawing them 0.02ms, so the frame rate was the only thing in the
 # way.
 SPEC_TICK = 0.02
@@ -1234,15 +1234,19 @@ class Spectrum:
         self.target = target
         try:
             self.proc = subprocess.Popen(
-                # stream.capture.sink is what makes this the sink's monitor
-                # rather than a source: without it pw-record connects happily,
-                # streams at the right rate, and delivers digital silence.
-                ['pw-record', '--target', target, '-P', 'stream.capture.sink=true',
-                 f'--rate={self.RATE}', '--channels=1', '--format=f32',
-                 '--latency=10ms', '-'],
+                # parecord rather than pw-record: PipeWire 1.6.10 writes
+                # uninitialised memory when pw-record's output is stdout. Clean
+                # to a file, garbage down a pipe, at every rate, channel count
+                # and format alike -- half the "samples" land outside +-1.0 and
+                # one in 256 is inf or NaN, which pinned every column to the
+                # top. A sink's monitor is an ordinary source to the Pulse API,
+                # so naming it directly does what stream.capture.sink was for.
+                ['parecord', f'--device={target}.monitor',
+                 f'--rate={self.RATE}', '--channels=1', '--format=float32le',
+                 '--latency-msec=10', '--raw'],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except Exception as e:
-            print(f'pw-record: {e!r}', flush=True)
+            print(f'parecord: {e!r}', flush=True)
             self.proc = None
             return
         threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
@@ -1262,7 +1266,7 @@ class Spectrum:
 
         read1() rather than read(): read() waits for the full count and so
         held the buffer a whole extra chunk behind, 71Hz instead of the 96Hz
-        pw-record was actually delivering.
+        the capture was actually delivering.
         """
         need = self.WINDOW * 4
         buf = b''
@@ -1307,6 +1311,12 @@ class Spectrum:
         levels = [0.0] * CELLS
         if np is not None and len(raw) >= self.WINDOW * 4:
             x = np.frombuffer(raw[-self.WINDOW * 4:], dtype=np.float32)
+            # A capture delivering inf or NaN is not audio. One inf survives
+            # the FFT, makes log10 return inf, and clamps every column to the
+            # top -- a wall of light that looks like a broken board rather
+            # than a broken capture. Read it as silence instead.
+            if not np.all(np.isfinite(x)):
+                x = np.zeros(self.WINDOW, dtype=np.float32)
             win = np.hanning(len(x))
             # scaled so a full-scale sine reads 0 dB whatever the window
             # length: without it every band pins to the top of the column

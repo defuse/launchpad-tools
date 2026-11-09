@@ -1,6 +1,6 @@
 """The audio spectrum tab.
 
-No audio is captured here: pw-record is the harness's fake process, and the
+No audio is captured here: parecord is the harness's fake process, and the
 sample window is written straight into the analyser.
 """
 import math
@@ -17,11 +17,11 @@ def spec(board, mod):
 
 
 def captures():
-    return [p.argv for p in FakePopen.instances if p.argv[0] == 'pw-record']
+    return [p.argv for p in FakePopen.instances if p.argv[0] == 'parecord']
 
 
 def tone(mod, hz, amplitude=0.5, samples=None):
-    """One window of a pure tone, as pw-record would deliver it."""
+    """One window of a pure tone, as the capture would deliver it."""
     n = samples or mod.Spectrum.WINDOW
     t = np.arange(n) / mod.Spectrum.RATE
     return (amplitude * np.sin(2 * math.pi * hz * t)).astype(np.float32).tobytes()
@@ -43,10 +43,9 @@ def test_nothing_is_captured_until_the_tab_is_drawn(board, mod):
 
 def test_drawing_the_tab_starts_a_capture_of_the_current_output(spec, mod):
     spec.bands('game_stereo', 1000.0)
-    assert captures() == [['pw-record', '--target', 'game_stereo',
-                           '-P', 'stream.capture.sink=true',
+    assert captures() == [['parecord', '--device=game_stereo.monitor',
                            f'--rate={mod.Spectrum.RATE}', '--channels=1',
-                           '--format=f32', '--latency=10ms', '-']]
+                           '--format=float32le', '--latency-msec=10', '--raw']]
 
 
 def test_the_spectrum_tab_is_drawn_faster_than_the_rest_of_the_board(mod):
@@ -58,10 +57,10 @@ def test_the_spectrum_tab_is_drawn_faster_than_the_rest_of_the_board(mod):
 
 
 def test_capture_asks_for_the_monitor_side_of_the_sink(spec):
-    """Without stream.capture.sink pw-record connects, streams at the right
-    rate, and delivers digital silence."""
+    """The sink is an output; its .monitor is the source carrying what is
+    playing. Recording the sink's own name would capture nothing."""
     spec.bands('game_stereo', 1000.0)
-    assert 'stream.capture.sink=true' in captures()[0]
+    assert '--device=game_stereo.monitor' in captures()[0]
 
 
 def test_capture_follows_the_output(spec, mod):
@@ -69,7 +68,8 @@ def test_capture_follows_the_output(spec, mod):
     move the capture with it or the bars keep showing the speakers."""
     spec.bands('game_stereo', 1000.0)
     spec.bands('headset', 1000.1)
-    assert [c[2] for c in captures()] == ['game_stereo', 'headset']
+    assert [c[1] for c in captures()] == ['--device=game_stereo.monitor',
+                                          '--device=headset.monitor']
 
 
 def test_leaving_the_tab_stops_the_capture(spec, mod):
@@ -81,7 +81,7 @@ def test_leaving_the_tab_stops_the_capture(spec, mod):
 
 
 def test_no_output_means_no_capture_attempt(spec):
-    """An empty sink name would make pw-record pick the default source, which
+    """An empty sink name would leave the capture on the default source, which
     is the microphone -- the board would show the room, not the music."""
     levels, _ = spec.bands('', 1000.0)
     assert captures() == [] and levels == [0.0] * 8
@@ -98,7 +98,7 @@ def test_the_bands_are_log_spaced(spec, mod):
 
 def test_a_tone_lights_the_band_it_belongs_to(spec, mod):
     """1kHz sits in the fifth band of 40Hz..12kHz over eight columns."""
-    levels, _ = feed(spec, 'x.monitor', tone(mod, 1000), 1000.0)
+    levels, _ = feed(spec, 'x', tone(mod, 1000), 1000.0)
     assert levels.index(max(levels)) == 4
     assert max(levels) > 0.5
 
@@ -106,30 +106,40 @@ def test_a_tone_lights_the_band_it_belongs_to(spec, mod):
 def test_a_low_tone_lights_a_low_band(spec, mod):
     """Band 0 or 1, not an exact column: at 23Hz per bin a 60Hz tone straddles
     the boundary, and the tilt lifts the band above it by design."""
-    levels, _ = feed(spec, 'x.monitor', tone(mod, 60), 1000.0)
+    levels, _ = feed(spec, 'x', tone(mod, 60), 1000.0)
     assert levels.index(max(levels)) <= 1
     assert max(levels[4:]) < max(levels[:2])
 
 
 def test_silence_is_dark(spec, mod):
     quiet = np.zeros(mod.Spectrum.WINDOW, dtype=np.float32).tobytes()
-    levels, _ = feed(spec, 'x.monitor', quiet, 1000.0)
+    levels, _ = feed(spec, 'x', quiet, 1000.0)
     assert levels == [0.0] * mod.CELLS
 
 
+def test_a_capture_of_inf_or_nan_reads_as_silence_not_a_wall_of_light(spec, mod):
+    """PipeWire 1.6.10 piped uninitialised memory instead of audio. One inf
+    survives the FFT and makes log10 return inf, which clamped every column to
+    the top -- the board looked broken rather than the capture."""
+    for junk in (np.inf, -np.inf, np.nan):
+        raw = np.full(mod.Spectrum.WINDOW, junk, dtype=np.float32).tobytes()
+        levels, _ = feed(spec, 'x', raw, 1000.0)
+        assert levels == [0.0] * mod.CELLS, f'{junk} lit the board'
+
+
 def test_a_quieter_tone_reads_lower(spec, mod):
-    loud, _ = feed(spec, 'x.monitor', tone(mod, 1000, 0.5), 1000.0)
-    soft, _ = feed(spec, 'x.monitor', tone(mod, 1000, 0.02), 1000.1)
+    loud, _ = feed(spec, 'x', tone(mod, 1000, 0.5), 1000.0)
+    soft, _ = feed(spec, 'x', tone(mod, 1000, 0.02), 1000.1)
     assert soft[4] < loud[4]
 
 
 def test_peaks_hang_above_the_bar_and_fall_back(spec, mod):
-    levels, peaks = feed(spec, 'x.monitor', tone(mod, 1000, 0.5), 1000.0)
+    levels, peaks = feed(spec, 'x', tone(mod, 1000, 0.5), 1000.0)
     assert peaks[4] == levels[4]
     spec.raw = np.zeros(mod.Spectrum.WINDOW, dtype=np.float32).tobytes()
-    _, later = spec.bands('x.monitor', 1000.5)
+    _, later = spec.bands('x', 1000.5)
     assert 0 < later[4] < peaks[4], 'falling, not gone'
-    _, much_later = spec.bands('x.monitor', 1010.0)
+    _, much_later = spec.bands('x', 1010.0)
     assert much_later[4] == 0.0
 
 
